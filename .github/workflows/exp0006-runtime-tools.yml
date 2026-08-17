@@ -89,20 +89,48 @@ jobs:
           assert 'validate_read_only_command(argv)' in source
           assert 'command is outside the read-only allowlist' in source
           PY
-      - name: Validate protocol boundaries
-        shell: bash
+      - name: Validate protocol and baseline boundaries
         run: |
-          set -euo pipefail
-          grep -q 'BLOCKED_PENDING_PREFLIGHT_RECOVERY_REVIEW_AND_EXPLICIT_LOAD_APPROVAL' \
-            docs/runtime/EXP-0006-native-protocol.md
-          grep -q 'does not grant approval' \
-            docs/runtime/EXP-0006-approval-template.md
-          grep -q 'unload_nvidia_stack' \
-            docs/runtime/EXP-0006-native-protocol.md
-          grep -q 'verify-exp0006-loaded.py' \
-            docs/runtime/EXP-0006-native-protocol.md
-          if grep -qE 'drm_info|uname -a|edid-hashes|nvidia-bug-report' \
-              scripts/collect-native-baseline.sh; then
-            echo 'baseline collector reintroduced broad or identifying collection' >&2
-            exit 1
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import shlex
+
+          protocol = Path('docs/runtime/EXP-0006-native-protocol.md').read_text()
+          approval = Path('docs/runtime/EXP-0006-approval-template.md').read_text()
+          assert 'BLOCKED_PENDING_PREFLIGHT_RECOVERY_REVIEW_AND_EXPLICIT_LOAD_APPROVAL' in protocol
+          assert 'unload_nvidia_stack' in protocol
+          assert 'verify-exp0006-loaded.py' in protocol
+          assert 'does not grant approval' in approval
+
+          forbidden_names = {
+              'drm-info',
+              'vulkan-summary',
+              'edid-hashes',
+              'nvidia-bug-report',
+          }
+          forbidden_commands = {
+              'drm_info',
+              'vulkaninfo',
+              'nvidia-bug-report.sh',
+          }
+          violations = []
+          path = Path('scripts/collect-native-baseline.sh')
+          for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+              stripped = line.strip()
+              if not stripped.startswith('run '):
+                  continue
+              parts = shlex.split(stripped)
+              if len(parts) < 3:
+                  violations.append((lineno, 'malformed run invocation', stripped))
+                  continue
+              run_name = parts[1]
+              argv = parts[2:]
+              joined = ' '.join(argv)
+              if run_name in forbidden_names:
+                  violations.append((lineno, f'forbidden collector name {run_name}', stripped))
+              if argv[:2] == ['uname', '-a']:
+                  violations.append((lineno, 'hostname-bearing uname -a', stripped))
+              if any(command in joined for command in forbidden_commands):
+                  violations.append((lineno, 'broad or identifying command', stripped))
+          assert not violations, violations
+          PY
