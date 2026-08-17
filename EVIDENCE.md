@@ -14,8 +14,13 @@ Labels: `PROVEN_SOURCE`, `PROVEN_BUILD`, `PROVEN_RUNTIME`, `INFERRED`, `UNKNOWN`
 | EV-0008 | PROVEN_BUILD | Dedicated NVKMS ioctl/KAPI path compiles and preserves detailed errors | commit `6918273d...` |
 | EV-0009 | PROVEN_BUILD | Default-off `nvidia-drm` structured diagnostic compiles | commit `eb6cb2f4...` |
 | EV-0010 | PROVEN_BUILD | Experimental ioctl and KAPI additions are append-only and rebuild cleanly | commit `3759ee6d...` |
-| EV-0011 | PROVEN_BUILD | Final PR head passed all six checks, including complete module compilation | commit `de4bc76f...`, Actions run `32024540017` |
+| EV-0011 | PROVEN_BUILD | Final implementation head passed all six checks, including complete module compilation | commit `de4bc76f...`, Actions run `32024540017` |
 | EV-0012 | PROVEN_SOURCE | Read-only implementation is integrated into `main` | merge `e9507b77...` |
 | EV-0013 | UNKNOWN | RTX 2060 Linux RM/GSP returns meaningful state | EXP-0006 pending |
 | EV-0014 | UNKNOWN | Target route authenticates HDCP 2.2 Type 1 | later Gate 2 experiment |
 | EV-0015 | UNKNOWN | NVIDIA Vulkan Linux advertises protected memory/video/presentation | EXP-0004 pending |
+| EV-0016 | PROVEN_BUILD | Runtime-readiness tools compile and pass deterministic confinement, loaded-identity, rollback, and baseline-artifact tests | PR #3 head `94a50cc2...`, `exp0006-runtime-tools` |
+| EV-0017 | PROVEN_BUILD | The runtime-readiness candidate completes a deterministic full NVIDIA module build, validates version/`vermagic`/`srcversion`, records text-only hashes, and cleans generated modules | PR #3 head `94a50cc2...`, Actions run `32064088120` |
+| EV-0018 | PROVEN_SOURCE | EXP-0006 is defined as one default-off negative control plus two identical enabled clean-boot replications with exact-build binding and verified restoration | `docs/runtime/EXP-0006-native-protocol.md` |
+| EV-0019 | UNKNOWN | Native preflight and recovery requirements are satisfied on the target RTX 2060 machine | EXP-0006 Phase A–D pending |
+| EV-0020 | UNKNOWN | Enabled HDCP state observations reproduce under the required controls | EXP-0006 Sessions 2–3 pending |
