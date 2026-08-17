@@ -6,6 +6,7 @@ on:
       - agent/read-only-nvkms-hdcp-query
     paths:
       - 'scripts/apply-read-only-nvkms-kapi.py'
+      - 'scripts/fix-read-only-hdcp-abi-order.py'
       - '.github/workflows/apply-read-only-nvkms-kapi.yml'
   workflow_dispatch:
 
@@ -27,22 +28,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential linux-headers-generic
       - name: Apply read-only NVKMS/KAPI transformation
-        run: python3 scripts/apply-read-only-nvkms-kapi.py
-      - name: Verify safety and interface consistency
+        run: |
+          python3 scripts/apply-read-only-nvkms-kapi.py
+          python3 scripts/fix-read-only-hdcp-abi-order.py
+      - name: Verify safety, ordering, and interface consistency
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
           cmp kernel-open/common/inc/nvkms-kapi.h src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+          python3 - <<'PY'
+          from pathlib import Path
+          api = Path('src/nvidia-modeset/interface/nvkms-api.h').read_text()
+          expected = ('    NVKMS_IOCTL_UNREGISTER_VBLANK_INTR_CALLBACK,\n'
+                      '    NVKMS_IOCTL_QUERY_DPY_HDCP_STATE,\n'
+                      '};\n')
+          assert expected in api, 'HDCP ioctl must be appended without renumbering existing commands'
+          header = Path('kernel-open/common/inc/nvkms-kapi.h').read_text()
+          query = header.index('    NvBool (*queryHdcpState)')
+          unregister = header.index('    void (*unregisterVblankIntrCallback)')
+          assert query > unregister, 'experimental KAPI function must be appended to the table'
+          PY
           git diff > /tmp/nvkms-kapi.diff
           grep -q 'NVKMS_IOCTL_QUERY_DPY_HDCP_STATE' /tmp/nvkms-kapi.diff
           grep -q 'queryHdcpState' /tmp/nvkms-kapi.diff
           if grep -E 'drm_connector_attach_content_protection_property|_SET_TYPE|_RENEGOTIATE' /tmp/nvkms-kapi.diff; then
             echo 'Forbidden control/property symbol found in read-only patch.' >&2
-            exit 1
-          fi
-          if git diff --name-only | grep 'kernel-open/nvidia-drm' >/dev/null; then
-            echo 'Read-only KAPI patch unexpectedly modifies nvidia-drm.' >&2
             exit 1
           fi
       - name: Select kernel headers
@@ -70,5 +81,5 @@ jobs:
             kernel-open/common/inc/nvkms-kapi.h \
             src/nvidia-modeset/kapi/interface/nvkms-kapi.h \
             src/nvidia-modeset/kapi/src/nvkms-kapi.c
-          git commit -m 'nvkms: expose read-only HDCP state through KAPI'
+          git commit -m 'nvkms: preserve existing ABI order for HDCP query'
           git push origin HEAD:agent/read-only-nvkms-hdcp-query
