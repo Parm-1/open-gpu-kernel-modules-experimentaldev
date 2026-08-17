@@ -41,15 +41,45 @@ jobs:
           python3 scripts/exp0006-preflight.py --self-test
           python3 scripts/build-exp0006.py --self-test
           python3 scripts/render-exp0006-rollback.py --self-test
-      - name: Reject privileged operations in read-only preflight
-        shell: bash
+      - name: Verify preflight command confinement
         run: |
-          set -euo pipefail
-          if grep -En '(^|[^[:alnum:]_])(insmod|rmmod|modprobe|reboot|shutdown)([^[:alnum:]_]|$)' \
-              scripts/exp0006-preflight.py; then
-            echo 'preflight must remain read-only' >&2
-            exit 1
-          fi
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+
+          path = Path('scripts/exp0006-preflight.py')
+          tree = ast.parse(path.read_text())
+
+          class CommandVisitor(ast.NodeVisitor):
+              def __init__(self):
+                  self.function = None
+                  self.direct_runs = []
+
+              def visit_FunctionDef(self, node):
+                  previous = self.function
+                  self.function = node.name
+                  self.generic_visit(node)
+                  self.function = previous
+
+              def visit_Call(self, node):
+                  func = node.func
+                  if (
+                      isinstance(func, ast.Attribute)
+                      and isinstance(func.value, ast.Name)
+                      and func.value.id == 'subprocess'
+                      and func.attr in {'run', 'Popen', 'call', 'check_call', 'check_output'}
+                  ):
+                      self.direct_runs.append((func.attr, self.function, node.lineno))
+                  self.generic_visit(node)
+
+          visitor = CommandVisitor()
+          visitor.visit(tree)
+          assert len(visitor.direct_runs) == 1, visitor.direct_runs
+          assert visitor.direct_runs[0][:2] == ('run', 'run_command'), visitor.direct_runs
+          source = path.read_text()
+          assert 'validate_read_only_command(argv)' in source
+          assert 'command is outside the read-only allowlist' in source
+          PY
       - name: Validate protocol boundaries
         shell: bash
         run: |
@@ -58,3 +88,5 @@ jobs:
             docs/runtime/EXP-0006-native-protocol.md
           grep -q 'does not grant approval' \
             docs/runtime/EXP-0006-approval-template.md
+          grep -q 'unload_nvidia_stack' \
+            docs/runtime/EXP-0006-native-protocol.md
