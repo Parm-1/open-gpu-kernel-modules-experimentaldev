@@ -9,7 +9,9 @@ Last updated: 2026-08-17
 - Upstream source baseline: `e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb`
 - Read-only implementation merge: `e9507b77cd2075c82ad34353660666ae58ccf502`
 - Final implementation head: `de4bc76f4c9f1575b3527f95da719c5e1cb7e708`
+- Runtime-readiness merge: `3099029dda066e0545267660b8e4e470655b20ba`
 - Runtime-readiness implementation head: `94a50cc2b6199b9804c30bbf2a101278742e5134`
+- MF CDM first-failure implementation head: `f1960bfb3583e9b09d56f9fe5cf87af91e3c40bf`
 - Target GPU: GeForce RTX 2060 (Turing)
 - Initial route: direct DisplayPort SST, one display, SDR 1920×1080 60 Hz
 
@@ -19,49 +21,47 @@ Last updated: 2026-08-17
 
 **Gate 1 read-only query implementation: MERGED / FULL-MODULE-BUILD-PASSED / RUNTIME-NOT-RUN**
 
-**Gate 1 runtime readiness: TOOLING-COMPLETE / CI-PASSED / NATIVE-PREFLIGHT-NOT-RUN**
+**Gate 1 runtime readiness: MERGED / TOOLING-COMPLETE / NATIVE-PREFLIGHT-NOT-RUN**
 
-Highest security state proven remains `SOURCE_PRESENT`. Generic-header compilation, runtime-tool self-tests, module-identity validation, and protocol preparation do not prove `CAPABILITY_ADVERTISED` on the RTX 2060.
+Highest NVIDIA security state proven remains `SOURCE_PRESENT`. Generic-header compilation, runtime-tool self-tests, module-identity validation, and protocol preparation do not prove `CAPABILITY_ADVERTISED` on the RTX 2060.
 
-## Compiled implementation
+## Compiled NVIDIA implementation
 
 - `cd5f5634d552963e1a713306942c57f505b28740` — DisplayPort/RM-owned read-only raw state query.
 - `6918273d53ecf844b7495b94dec902049a61bb59` — dedicated NVKMS ioctl and KAPI path.
 - `eb6cb2f4dc052709a3bc2445e962c8c9c97d1d51` — default-off `nvidia-drm` structured diagnostic.
 - `3759ee6d4fd9c0d13a69d18e988d8409f303e1d0` — append-only ABI ordering correction.
 - `de4bc76f4c9f1575b3527f95da719c5e1cb7e708` — final implementation head; all six checks passed, including complete module compilation.
-- `e9507b77cd2075c82ad34353660666ae58ccf502` — implementation merge to `main`; all post-merge research and decoder checks passed.
+- `e9507b77cd2075c82ad34353660666ae58ccf502` — implementation merge to `main`.
+- `3099029dda066e0545267660b8e4e470655b20ba` — fail-closed EXP-0006 runtime-readiness merge.
 
 No experimental module has been installed or loaded, no boot configuration has changed, and no reboot has been performed.
 
-## Runtime-readiness tooling
+## EXP-0006 runtime readiness
 
-The repository now contains:
+The repository contains a command-confined native preflight, exact-kernel clean-build packager, loaded-module verifier, machine-specific rollback renderer, minimized baseline collector, operation-scoped approval record, and three-clean-boot protocol: one default-off negative control and two enabled replications.
 
-- a read-only, command-confined native preflight;
-- loaded-versus-on-disk NVIDIA module identity checks;
-- an exact-running-kernel clean-build and provenance packager;
-- deterministic build user/host values;
-- a machine-specific, non-executing rollback-plan renderer;
-- a read-only verifier that binds an approved build manifest to the loaded modules and `nvidia_drm` parameters;
-- a minimized native baseline collector that excludes EDID contents, broad DRM dumps, hardware UUID queries, and vendor bug reports;
-- an operation- and session-scoped approval record;
-- one default-off negative-control session and two separately booted enabled replications;
-- CI syntax, confinement, privacy, smoke, complete-module-build, module-identity, and post-build-cleanup checks.
+The next NVIDIA evidence must come from the native RTX 2060 machine under that protocol. Authentication, Type 0/Type 1 selection, KMS content-protection properties, HDMI, MST, protected decode, and service testing remain blocked.
 
-Candidate head `94a50cc2b6199b9804c30bbf2a101278742e5134` passed all seven PR checks, including the complete NVIDIA module build. These results prove tooling/build integrity only.
+## Media Foundation CDM discovery track
 
-## Next evidence-producing action
+E-001 is source-complete and Windows-build-passed at `f1960bfb3583e9b09d56f9fe5cf87af91e3c40bf`.
 
-On the native RTX 2060 machine:
+The probe uses only public Windows SDK interfaces and stops at:
 
-1. run the read-only EXP-0006 preflight from a clean checkout;
-2. resolve every blocker and warning, verify SSH/TTY and the known-good boot entry, and store the rollback material offline;
-3. create and hash an exact-running-kernel clean-build package;
-4. complete the recovery checklist and record operation-scoped approval bound to that exact package;
-5. run the default-off negative control from a clean boot and verify known-good restoration;
-6. run enabled read-only observation 1 from a clean boot and restore;
-7. run enabled read-only observation 2 under identical controls from another clean boot and restore;
-8. review all three sessions and assign one Gate 1 verdict.
+```text
+COM → MFStartup → Media Engine factory → IMFMediaEngineClassFactory4
+    → optional explicit CDM factory → IsTypeSupported
+```
 
-Authentication control, Type 0/Type 1 selection, KMS content-protection properties, HDMI, MST, protected decode, and service testing remain blocked.
+It contains no default vendor key system and performs no CDM access, CDM/session, request, license, network, media, or playback operation. MSVC warnings-as-errors, deterministic self-tests, source-policy checks, and direct PE-import checks passed.
+
+Native Windows and Wine runtime traces remain `NOT_RUN`; E-002 remains blocked until an identical executable hash and exact input produce a paired first-failure comparison.
+
+## Next evidence-producing actions
+
+1. Run the read-only EXP-0006 preflight on the native RTX 2060 machine and complete the exact-build/recovery package.
+2. Execute the default-off and two enabled EXP-0006 sessions only after operation-scoped approval.
+3. Collect EXP-0007 infrastructure-only traces on native Windows and Wine with the same built executable hash.
+4. Only after the infrastructure comparison, decide whether a separately recorded explicit key-system/type query is justified.
+5. Do not begin NVIDIA authentication/KMS work or Wine PMP implementation before their respective evidence gates pass.

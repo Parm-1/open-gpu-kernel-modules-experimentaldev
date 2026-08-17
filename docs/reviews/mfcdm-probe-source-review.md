@@ -1,30 +1,35 @@
 # `mfcdm-probe` source review
 
-Review status: `PENDING_WINDOWS_CI`
+Review status: `PASSED_WINDOWS_CI`
 
-## Intended properties
+Reviewed source commit: `f1960bfb3583e9b09d56f9fe5cf87af91e3c40bf`
 
-- Builds only against public Microsoft Windows SDK interfaces.
-- Uses no redistributed Windows system binary or proprietary CDM.
-- Has no built-in vendor or service key-system identifier.
-- Performs no network operation.
-- Stops at `IMFContentDecryptionModuleFactory::IsTypeSupported`.
-- Emits deterministic JSON fields and preserves HRESULT values.
-- Releases COM objects before `MFShutdown` and balances successful COM initialization.
-- Treats unsupported and failed as distinct outcomes.
-- Returns nonzero evidence codes rather than fabricating success.
+## Result
 
-## CI review requirements
+The first E-001 implementation is source-complete and build-passed. It uses the public Microsoft Windows SDK discovery interfaces and stops after `IMFContentDecryptionModuleFactory::IsTypeSupported`.
 
-The Windows workflow must:
+The Windows workflow completed successfully with:
 
-1. compile with MSVC warnings as errors;
-2. run the internal non-COM self-test;
-3. reject prohibited CDM/session/license/network calls in source;
-4. inspect direct PE imports and reject WinHTTP, WinINet, URLMon, and Winsock;
-5. archive the executable hash and import report;
-6. avoid treating the CI host as a Windows protected-media runtime result.
+- MSVC `/W4 /WX`, conforming mode, SDL checks, UTF-8 source handling, CFG, DEP, and ASLR;
+- deterministic internal self-tests that perform no COM or CDM query;
+- a usage-error negative control;
+- source-policy checks rejecting CDM access, CDM creation, session creation, request/license operations, network calls, and hardcoded known vendor key-system identifiers;
+- direct PE-import inspection rejecting WinHTTP, WinINet, Winsock, and URLMon;
+- executable SHA-256 and import-report packaging;
+- an explicit build-only verdict.
 
-## Claim boundary
+## Source findings
 
-A green build proves `SOURCE_PRESENT` and buildability only. No Windows or Wine runtime stage is proven by this review.
+- No Windows system binary, proprietary CDM, certificate, key, license body, challenge, media sample, or private COM declaration is redistributed.
+- No key-system identifier is queried unless supplied explicitly by the operator.
+- The no-input path ends after the public `IMFMediaEngineClassFactory4` interface is obtained and marks key-system stages `not_requested`.
+- HRESULT failure and semantic unsupported are separate outcomes.
+- COM objects are released before `MFShutdown`; successful COM initialization is balanced before process exit.
+- The stable JSON policy explicitly records that no access object, CDM, session, request, network operation, or playback is created.
+- Nonzero evidence exits are intentional and are not converted into fake success.
+
+## Remaining uncertainty
+
+CI proves Windows SDK buildability and static safety boundaries only. The workflow deliberately runs only `--self-test`, so no COM, Media Foundation factory, key-system, or type-support runtime stage is established by CI.
+
+Native Windows and Wine traces remain `NOT_RUN`. A runtime verdict requires the identical executable hash and exact explicit input on both platforms.

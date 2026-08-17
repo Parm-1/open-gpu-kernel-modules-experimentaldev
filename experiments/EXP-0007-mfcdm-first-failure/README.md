@@ -6,7 +6,7 @@ At which public Media Foundation discovery stage does the same explicit CDM fact
 
 ## Current status
 
-Source is staged for Windows SDK CI. Neither the Windows discovery path nor the Wine path has been executed as experiment evidence.
+The public-SDK source builds with MSVC warnings as errors, passes deterministic self-tests, and passes source/import safety checks. Neither the native-Windows discovery path nor the Wine path has been executed as experiment evidence.
 
 ## Safety boundary
 
@@ -16,12 +16,12 @@ The probe stops at `IMFContentDecryptionModuleFactory::IsTypeSupported`. It does
 
 For each platform preserve:
 
-- executable SHA-256;
+- the identical executable SHA-256;
 - exact command and explicit input;
 - stdout JSON and stderr;
 - exit code;
-- OS/Wine version;
+- minimal OS or Wine version without host identity;
 - first failure stage and HRESULT, or first unsupported stage;
-- statement that no later CDM/license/media operation was attempted.
+- statement that no later CDM, license, network, or media operation was attempted.
 
-Use the same executable hash and exact input for the paired Windows/Wine comparison.
+Use the same executable hash and exact input for the paired Windows/Wine comparison. A no-key-system infrastructure trace should be collected first; any explicit key-system query is a separate observation.
