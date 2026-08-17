@@ -1,1 +1,6 @@
-# Defined after the source-only patch is reviewed.
+# Runtime commands are gated by recovery preparation and explicit approval.
+# See docs/runtime/EXP-0006-native-protocol.md.
+
+journalctl -k -b --no-pager | grep 'HDCP_PROBE' > hdcp-probe.log
+python3 scripts/decode-hdcp-probe.py hdcp-probe.log > hdcp-probe.json
+sha256sum hdcp-probe.log hdcp-probe.json > artifacts.sha256

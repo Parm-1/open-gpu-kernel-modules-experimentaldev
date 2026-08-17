@@ -8,33 +8,25 @@ Last updated: 2026-08-17
 - NVIDIA source release: `610.57.04`
 - Baseline commit: `e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb`
 - Target GPU: GeForce RTX 2060 (Turing)
-- Initial physical route: direct DisplayPort, one display, SDR 1920×1080 at 60 Hz, no adapters, docks, MST, secondary outputs, HDR, or VRR
+- Initial route: direct DisplayPort SST, one display, SDR 1920×1080 60 Hz
 
 ## Current gate
 
-**Gate 0 — reproducible baseline: IN PROGRESS**
+**Gate 0 hardware baseline: BLOCKED ON NATIVE TARGET EXECUTION**
 
-The source half of Gate 0 is implemented by the foundation branch. Native Linux connector ownership, KMS properties, Vulkan runtime capabilities, monitor EDID hash, and the same-hardware Windows reference require execution on the target machine.
+**Gate 1 read-only query implementation: SOURCE-COMPLETE / BUILD-PASSED / RUNTIME-NOT-RUN**
 
-## Proven from pinned public source
+Highest security state proven remains `SOURCE_PRESENT`. A generic-header module build does not prove `CAPABILITY_ADVERTISED` on the RTX 2060.
 
-1. `590.48.01` hard-codes DisplayPort HDCP state as unsupported.
-2. `595.44.02` contains RM-backed HDCP query and control paths.
-3. `610.57.04` retains HDCP 1.x/2.2 state parsing, authentication control, link validation, Type 0/Type 1 selection, and DP group encryption management.
-4. Current `nvidia-drm` does not attach the standard Linux content-protection properties.
-5. Current public NVKMS KAPI exposes no dedicated HDCP query, request, status, or event surface.
+## Compiled implementation
 
-These are `SOURCE_PRESENT` findings only.
+- `cd5f5634d552963e1a713306942c57f505b28740` — DisplayPort/RM-owned read-only raw state query.
+- `6918273d53ecf844b7495b94dec902049a61bb59` — dedicated NVKMS ioctl and KAPI path.
+- `eb6cb2f4dc052709a3bc2445e962c8c9c97d1d51` — default-off `nvidia-drm` structured diagnostic.
+- `3759ee6d4fd9c0d13a69d18e988d8409f303e1d0` — append-only ABI ordering correction.
 
-## Highest-information next experiment
+Each source layer passed a complete module build. No module was installed or loaded.
 
-Implement a DisplayPort-SST-only, read-only NVKMS HDCP state query that reaches the authoritative DP/RM-owned state, returns capability/authentication/encryption/Type 1/raw status fields, performs no control operation, and preserves failure as data.
+## Next evidence-producing action
 
-See `docs/implementation/read-only-nvkms-query-design.md` and `experiments/EXP-0006-read-only-nvkms-hdcp/`.
-
-## Explicit blockers
-
-- No native target-machine measurements have been collected.
-- No modified module has been built against the target kernel or loaded.
-- The source path from an NVKMS display object to the DP library's HDCP state owner is not yet implemented or proven.
-- Vendor attestation and Netflix authorization remain unproven.
+After the recovery checklist and explicit module-load approval, execute `docs/runtime/EXP-0006-native-protocol.md` on native Linux and choose one Gate 1 verdict. Authentication control, KMS properties, HDMI, MST, protected decode, and Netflix remain blocked.

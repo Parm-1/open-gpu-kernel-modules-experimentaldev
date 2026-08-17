@@ -1,13 +1,9 @@
 # Verdict
 
-Status: `NOT_RUN`
+Runtime status: `NOT_RUN`
 
-Highest state proven: `NONE`
+Implementation status: `SOURCE_COMPLETE_BUILD_PASSED`
 
-## Result
+Highest runtime state proven: `NONE`
 
-Not run.
-
-## Required classification
-
-Use only the state vocabulary in `docs/security-state-model.md`. EXP-0006 must additionally choose one Gate 1 verdict from `CHARTER.md`.
+No Gate 1 verdict has been assigned. Loading the experimental module remains blocked on recovery preparation and explicit approval.

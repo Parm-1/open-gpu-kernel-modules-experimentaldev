@@ -3,7 +3,7 @@
   "created_at": "2026-08-17T00:00:00-04:00",
   "source_baseline": "e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb",
   "state_claim": "CAPABILITY_ADVERTISED",
-  "status": "PLANNED",
+  "status": "READY_FOR_APPROVED_RUNTIME",
   "requires_native_linux": true,
   "requires_windows": false,
   "requires_module_load": true,
@@ -11,5 +11,9 @@
   "id": "EXP-0006-read-only-nvkms-hdcp",
   "title": "Query authoritative HDCP state through NVKMS",
   "question": "Can a community-built read-only bridge retrieve meaningful DP HDCP state from the shipping RM/GSP path?",
-  "acceptance_criteria": ["A truthful state query preserves raw errors and yields one Gate 1 verdict; it performs no control operation."]
+  "acceptance_criteria": [
+    "A truthful query preserves transport failure, detailed result, RM status, raw flags, and validity.",
+    "The implementation performs no control operation.",
+    "The experiment yields one Gate 1 verdict under topology and default-off controls."
+  ]
 }
