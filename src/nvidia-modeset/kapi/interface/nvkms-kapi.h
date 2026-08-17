@@ -894,17 +894,6 @@ struct NvKmsKapiFunctionsTable {
     );
 
     /*!
-     * Query raw HDCP state without changing authentication or stream type.
-     * Detailed unsupported and RM failure states are returned in state.
-     */
-    NvBool (*queryHdcpState)
-    (
-        struct NvKmsKapiDevice *device,
-        NvKmsKapiDisplay display,
-        struct NvKmsKapiHdcpState *state
-    );
-
-    /*!
      * Allocate some unformatted video or system memory of the specified size.
      *
      * This function allocates video or system memory on the specified GPU. It
@@ -1694,6 +1683,17 @@ struct NvKmsKapiFunctionsTable {
         struct NvKmsKapiDevice *device,
         const NvU32 head,
         struct NvKmsKapiVblankIntrCallback *pCallback);
+    /*!
+     * Query raw HDCP state without changing authentication or stream type.
+     * Detailed unsupported and RM failure states are returned in state.
+     */
+    NvBool (*queryHdcpState)
+    (
+        struct NvKmsKapiDevice *device,
+        NvKmsKapiDisplay display,
+        struct NvKmsKapiHdcpState *state
+    );
+
 };
 
 /** @} */
