@@ -30,6 +30,26 @@
 extern "C" {
 #endif
 
+typedef enum {
+    NV_DP_HDCP_QUERY_RESULT_SUCCESS = 0,
+    NV_DP_HDCP_QUERY_RESULT_INVALID_ARGUMENT,
+    NV_DP_HDCP_QUERY_RESULT_UNSUPPORTED_ROUTE,
+    NV_DP_HDCP_QUERY_RESULT_NO_DEVICE,
+    NV_DP_HDCP_QUERY_RESULT_NOT_PLUGGED,
+    NV_DP_HDCP_QUERY_RESULT_NO_MAIN_LINK,
+    NV_DP_HDCP_QUERY_RESULT_RM_FAILURE,
+} NvDPHDCPQueryResult;
+
+typedef struct {
+    NvU32 rmStatus;
+    NvU32 flags;
+    NvBool valid;
+} NvDPHDCPRawState;
+
+NvDPHDCPQueryResult nvDPQueryHDCPRawState(
+    const NVDpyEvoRec *pDpyEvo,
+    NvDPHDCPRawState *pState);
+
 void nvDPDeviceSetPowerState(NVDpyEvoPtr pDpyEvo, NvBool on);
 unsigned int nvDPGetEDIDSize(const NVDpyEvoRec *pDpyEvo);
 NvBool nvDPGetEDID(const NVDpyEvoRec *pDpyEvo, void *buffer, unsigned int size);

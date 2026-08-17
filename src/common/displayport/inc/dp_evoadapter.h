@@ -392,6 +392,7 @@ namespace DisplayPort
         void configureHDCPRenegotiate(NvU64 cN = HDCP_DUMMY_CN, NvU64 cKsv = HDCP_DUMMY_CKSV, bool bForceReAuth = false,
                                       bool bRxIDMsgPending = false);
         void configureHDCPGetHDCPState(HDCPState &hdcpState);
+        bool queryHDCPRawState(HDCPRawState &rawState);
         bool rmUpdateDynamicDfpCache(NvU32 headIndex, RmDfpCache * dfpCache, NvBool bResetDfp);
 
         virtual NvU32 headToStream(NvU32 head, bool bSidebandMessageSupported, DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID streamIdentifier = DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID_PRIMARY);
