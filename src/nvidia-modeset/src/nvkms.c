@@ -49,6 +49,7 @@
 #include "nvkms-flip.h" /* nvFlipEvo */
 
 #include "dp/nvdp-connector.h"
+#include "dp/nvdp-device.h"
 
 #include "nvUnixVersion.h" /* NV_VERSION_STRING */
 #include <class/cl0000.h> /* NV01_NULL_OBJECT/NV01_ROOT */
@@ -5032,6 +5033,33 @@ static NvBool UnregisterVblankIntrCallback(struct NvKmsPerOpen *pOpen,
     return TRUE;
 }
 
+static NvBool QueryDpyHdcpState(
+    struct NvKmsPerOpen *pOpen,
+    void *pParamsVoid)
+{
+    struct NvKmsQueryDpyHdcpStateParams *pParams = pParamsVoid;
+    NVDpyEvoPtr pDpyEvo;
+    NvDPHDCPRawState rawState = {0};
+    NvDPHDCPQueryResult queryResult;
+
+    pDpyEvo = GetPerOpenDpy(pOpen,
+                                pParams->request.deviceHandle,
+                                pParams->request.dispHandle,
+                                pParams->request.dpyId);
+    if (pDpyEvo == NULL) {
+        return FALSE;
+    }
+
+    queryResult = nvDPQueryHDCPRawState(pDpyEvo, &rawState);
+    pParams->reply.queryResult = (NvU32)queryResult;
+    pParams->reply.rmStatus = rawState.rmStatus;
+    pParams->reply.flags = rawState.flags;
+    pParams->reply.valid = rawState.valid;
+
+    /* The ioctl transport succeeded even when the detailed query did not. */
+    return TRUE;
+}
+
 /*!
  * Perform the ioctl operation requested by the client.
  *
@@ -5097,6 +5125,7 @@ NvBool nvKmsIoctl(
         ENTRY(NVKMS_IOCTL_QUERY_CONNECTOR_DYNAMIC_DATA, QueryConnectorDynamicData),
         ENTRY(NVKMS_IOCTL_QUERY_DPY_STATIC_DATA, QueryDpyStaticData),
         ENTRY(NVKMS_IOCTL_QUERY_DPY_DYNAMIC_DATA, QueryDpyDynamicData),
+        ENTRY(NVKMS_IOCTL_QUERY_DPY_HDCP_STATE, QueryDpyHdcpState),
         ENTRY_CUSTOM_USER(NVKMS_IOCTL_VALIDATE_MODE_INDEX, ValidateModeIndex),
         ENTRY_CUSTOM_USER(NVKMS_IOCTL_VALIDATE_MODE, ValidateMode),
         ENTRY_CUSTOM_USER(NVKMS_IOCTL_SET_MODE, SetMode),

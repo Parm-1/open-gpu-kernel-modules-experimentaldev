@@ -541,6 +541,14 @@ struct NvKmsKapiDynamicDisplayParams {
     NvBool forceDisconnected;
 };
 
+/* Detailed result values match NvDPHDCPQueryResult in the DP bridge. */
+struct NvKmsKapiHdcpState {
+    NvU32 queryResult;
+    NvU32 rmStatus;
+    NvU32 flags;
+    NvBool valid;
+};
+
 struct NvKmsKapiCreateSurfaceParams {
 
     /* [IN] Parameter of each plane */
@@ -883,6 +891,17 @@ struct NvKmsKapiFunctionsTable {
     (
         struct NvKmsKapiDevice *device,
         struct NvKmsKapiDynamicDisplayParams *params
+    );
+
+    /*!
+     * Query raw HDCP state without changing authentication or stream type.
+     * Detailed unsupported and RM failure states are returned in state.
+     */
+    NvBool (*queryHdcpState)
+    (
+        struct NvKmsKapiDevice *device,
+        NvKmsKapiDisplay display,
+        struct NvKmsKapiHdcpState *state
     );
 
     /*!
