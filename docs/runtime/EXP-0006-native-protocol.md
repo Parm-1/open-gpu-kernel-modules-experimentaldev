@@ -91,6 +91,25 @@ Do not continue if the source commit, module version, target-kernel `vermagic`, 
 
 Use two clean-boot sessions. Execute from working SSH, with local TTY recovery also proven. The commands intentionally use exact local paths rather than `modprobe` for the experimental files.
 
+For both sessions, use this fail-closed helper after stopping the graphical target. It removes only NVIDIA modules that are actually present and verifies that none remain. Never use force-removal.
+
+```bash
+unload_nvidia_stack() {
+  local module
+  for module in nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia; do
+    if [[ -d "/sys/module/$module" ]]; then
+      sudo modprobe -r "$module"
+    fi
+  done
+  for module in nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia; do
+    if [[ -d "/sys/module/$module" ]]; then
+      echo "FAIL: $module is still loaded" >&2
+      return 1
+    fi
+  done
+}
+```
+
 ### Session 1: default-off negative control
 
 ```bash
@@ -100,7 +119,7 @@ scripts/collect-native-baseline.sh "$artifact_dir/preload-baseline"
 start_time="$(date --iso-8601=seconds)"
 
 sudo systemctl isolate multi-user.target
-sudo modprobe -r nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia
+unload_nvidia_stack
 
 sudo insmod "$(realpath "$build_dir/modules/nvidia.ko")"
 sudo insmod "$(realpath "$build_dir/modules/nvidia-modeset.ko")"
@@ -129,7 +148,7 @@ scripts/collect-native-baseline.sh "$artifact_dir/preload-baseline"
 start_time="$(date --iso-8601=seconds)"
 
 sudo systemctl isolate multi-user.target
-sudo modprobe -r nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia
+unload_nvidia_stack
 
 sudo insmod "$(realpath "$build_dir/modules/nvidia.ko")"
 sudo insmod "$(realpath "$build_dir/modules/nvidia-modeset.ko")"
