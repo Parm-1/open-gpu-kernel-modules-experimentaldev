@@ -31,11 +31,17 @@ jobs:
         run: |
           set -euo pipefail
           patch=patches/0001-displayport-add-read-only-hdcp-state-query.patch
-          if git apply --reverse --check --recount "$patch"; then
+          if git apply --reverse --check --recount "$patch" 2>/dev/null; then
             echo 'Patch is already applied.'
           else
-            git apply --check --recount "$patch"
-            git apply --recount "$patch"
+            git apply --check --recount "$patch" || {
+              echo 'Patch does not apply cleanly.' >&2
+              exit 1
+            }
+            git apply --recount "$patch" || {
+              echo 'Patch application failed.' >&2
+              exit 1
+            }
           fi
       - name: Verify patch safety boundary
         shell: bash
