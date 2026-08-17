@@ -8,8 +8,10 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED`, `DONE`, `KILLED`.
 | A-002 | DONE | Reproduce NVIDIA HDCP source transition | CI and EXP-0001 |
 | A-003 | DONE | Map NVIDIA call-graph discontinuity | architecture documents |
 | A-004 | DONE | Resolve NVKMS display-to-DP-library owner | compiled `NVDpyEvo → pDpLibConnector → mainLink` bridge |
-| B-001 | DONE | Implement read-only NVKMS HDCP state query | four compiled source commits and source review |
-| B-002 | BLOCKED | Run read-only query on native RTX 2060 | recovery checklist, approval, EXP-0006 raw evidence |
+| B-001 | DONE | Implement and merge read-only NVKMS HDCP state query | PR #2, merge `e9507b77...`, full module build |
+| B-002A | DONE | Prepare native EXP-0006 preflight, exact-kernel build, loaded-identity, rollback, baseline, approval, and replication tooling | PR #3 tooling and seven green checks on `94a50cc2...` |
+| B-002B | BLOCKED | Complete native-machine preflight and exact-kernel recovery package | zero preflight blockers, warnings resolved, offline rollback, approved build manifest |
+| B-002C | BLOCKED | Run default-off and two enabled EXP-0006 sessions on the RTX 2060 | three clean-boot sessions, verified restoration, raw evidence, Gate 1 verdict |
 | B-003 | BLOCKED | Request Type 0/Type 1 authentication | Gate 1 must pass first |
 | B-004 | BLOCKED | Attach standard KMS properties | Gate 2 must pass first |
 | C-001 | DONE | Add protected Vulkan capability probe skeleton | probe builds in CI |
@@ -27,7 +29,9 @@ Statuses: `TODO`, `IN_PROGRESS`, `BLOCKED`, `DONE`, `KILLED`.
 
 ## Priority order
 
-1. Review and merge the compile-tested read-only implementation PR.
-2. Prepare the native test machine and rollback path.
-3. Run Gate 0 and EXP-0006 only after explicit load/reboot approval.
-4. Classify Gate 1 before any control or KMS-property work.
+1. Run the read-only EXP-0006 preflight on the native RTX 2060 machine.
+2. Resolve version, identity, signing, recovery, and topology blockers and create the exact-kernel build package.
+3. Complete the human checklist and bind approval to the exact build and each session.
+4. Run the negative control and two enabled clean-boot replications, restoring the known-good stack after each.
+5. Classify Gate 1 before any authentication or KMS-property work.
+6. While native execution is blocked, advance E-001 and N-002 in separate changes.

@@ -1,0 +1,146 @@
+name: exp0006-runtime-tools
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'scripts/exp0006-preflight.py'
+      - 'scripts/build-exp0006.py'
+      - 'scripts/render-exp0006-rollback.py'
+      - 'scripts/verify-exp0006-loaded.py'
+      - 'scripts/collect-native-baseline.sh'
+      - 'docs/runtime/EXP-0006-native-protocol.md'
+      - 'docs/runtime/EXP-0006-approval-template.md'
+      - 'docs/recovery/native-test-recovery-checklist.md'
+      - '.github/workflows/exp0006-runtime-tools.yml'
+  pull_request:
+    paths:
+      - 'scripts/exp0006-preflight.py'
+      - 'scripts/build-exp0006.py'
+      - 'scripts/render-exp0006-rollback.py'
+      - 'scripts/verify-exp0006-loaded.py'
+      - 'scripts/collect-native-baseline.sh'
+      - 'docs/runtime/EXP-0006-native-protocol.md'
+      - 'docs/runtime/EXP-0006-approval-template.md'
+      - 'docs/recovery/native-test-recovery-checklist.md'
+      - '.github/workflows/exp0006-runtime-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Python tools and check shell syntax
+        run: |
+          python3 -m py_compile \
+            scripts/exp0006-preflight.py \
+            scripts/build-exp0006.py \
+            scripts/render-exp0006-rollback.py \
+            scripts/verify-exp0006-loaded.py
+          bash -n scripts/collect-native-baseline.sh
+      - name: Run deterministic self-tests
+        run: |
+          python3 scripts/exp0006-preflight.py --self-test
+          python3 scripts/build-exp0006.py --self-test
+          python3 scripts/render-exp0006-rollback.py --self-test
+          python3 scripts/verify-exp0006-loaded.py --self-test
+      - name: Smoke-test fail-closed baseline artifacts
+        run: |
+          baseline_dir="$RUNNER_TEMP/exp0006-baseline"
+          scripts/collect-native-baseline.sh "$baseline_dir"
+          (
+            cd "$baseline_dir"
+            sha256sum -c artifacts.sha256
+            test -s exit-codes.tsv
+            test -s README.txt
+          )
+      - name: Verify preflight command confinement
+        run: |
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+
+          path = Path('scripts/exp0006-preflight.py')
+          tree = ast.parse(path.read_text())
+
+          class CommandVisitor(ast.NodeVisitor):
+              def __init__(self):
+                  self.function = None
+                  self.direct_runs = []
+
+              def visit_FunctionDef(self, node):
+                  previous = self.function
+                  self.function = node.name
+                  self.generic_visit(node)
+                  self.function = previous
+
+              def visit_Call(self, node):
+                  func = node.func
+                  if (
+                      isinstance(func, ast.Attribute)
+                      and isinstance(func.value, ast.Name)
+                      and func.value.id == 'subprocess'
+                      and func.attr in {'run', 'Popen', 'call', 'check_call', 'check_output'}
+                  ):
+                      self.direct_runs.append((func.attr, self.function, node.lineno))
+                  self.generic_visit(node)
+
+          visitor = CommandVisitor()
+          visitor.visit(tree)
+          assert len(visitor.direct_runs) == 1, visitor.direct_runs
+          assert visitor.direct_runs[0][:2] == ('run', 'run_command'), visitor.direct_runs
+          source = path.read_text()
+          assert 'validate_read_only_command(argv)' in source
+          assert 'command is outside the read-only allowlist' in source
+          PY
+      - name: Validate protocol and baseline boundaries
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shlex
+
+          protocol = Path('docs/runtime/EXP-0006-native-protocol.md').read_text()
+          approval = Path('docs/runtime/EXP-0006-approval-template.md').read_text()
+          assert 'BLOCKED_PENDING_PREFLIGHT_RECOVERY_REVIEW_AND_EXPLICIT_LOAD_APPROVAL' in protocol
+          assert 'unload_nvidia_stack' in protocol
+          assert 'verify-exp0006-loaded.py' in protocol
+          assert 'does not grant approval' in approval
+
+          forbidden_names = {
+              'drm-info',
+              'vulkan-summary',
+              'edid-hashes',
+              'nvidia-bug-report',
+          }
+          forbidden_commands = {
+              'drm_info',
+              'vulkaninfo',
+              'nvidia-bug-report.sh',
+          }
+          violations = []
+          path = Path('scripts/collect-native-baseline.sh')
+          for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+              stripped = line.strip()
+              if not stripped.startswith('run '):
+                  continue
+              parts = shlex.split(stripped)
+              if len(parts) < 3:
+                  violations.append((lineno, 'malformed run invocation', stripped))
+                  continue
+              run_name = parts[1]
+              argv = parts[2:]
+              joined = ' '.join(argv)
+              if run_name in forbidden_names:
+                  violations.append((lineno, f'forbidden collector name {run_name}', stripped))
+              if argv[:2] == ['uname', '-a']:
+                  violations.append((lineno, 'hostname-bearing uname -a', stripped))
+              if any(command in joined for command in forbidden_commands):
+                  violations.append((lineno, 'broad or identifying command', stripped))
+          assert not violations, violations
+          PY
