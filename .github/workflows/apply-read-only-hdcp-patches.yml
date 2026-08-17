@@ -1,0 +1,73 @@
+name: apply-read-only-hdcp-patches
+
+on:
+  push:
+    branches:
+      - agent/read-only-nvkms-hdcp-query
+    paths:
+      - 'patches/0001-displayport-add-read-only-hdcp-state-query.patch'
+      - '.github/workflows/apply-read-only-hdcp-patches.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-build-and-push:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/read-only-nvkms-hdcp-query
+      - name: Install build dependencies and generic kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential linux-headers-generic
+      - name: Apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch=patches/0001-displayport-add-read-only-hdcp-state-query.patch
+          if git apply --reverse --check --recount "$patch"; then
+            echo 'Patch is already applied.'
+          else
+            git apply --check --recount "$patch"
+            git apply --recount "$patch"
+          fi
+      - name: Verify patch safety boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git diff --name-only | grep -E 'kernel-open/nvidia-drm|nvkms-kapi|nvkms-api' || true)"
+          ! git diff | grep -E 'drm_connector_attach_content_protection_property|_SET_TYPE|_RENEGOTIATE' >/dev/null
+      - name: Select kernel headers
+        id: headers
+        shell: bash
+        run: |
+          KDIR=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' | sort -V | tail -n1)
+          test -n "$KDIR"
+          echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+      - name: Build modules without installing
+        run: make modules -j2 SYSSRC='${{ steps.headers.outputs.kdir }}' SYSOUT='${{ steps.headers.outputs.kdir }}'
+      - name: Commit compiled source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            src/common/displayport/inc/dp_evoadapter.h \
+            src/common/displayport/inc/dp_mainlink.h \
+            src/common/displayport/src/dp_evoadapter.cpp \
+            src/nvidia-modeset/include/dp/nvdp-device.h \
+            src/nvidia-modeset/src/dp/nvdp-device.cpp
+          git commit -m 'displayport: add read-only HDCP state query'
+          git push origin HEAD:agent/read-only-nvkms-hdcp-query
