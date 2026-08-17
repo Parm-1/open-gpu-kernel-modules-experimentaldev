@@ -1,7 +1,7 @@
 diff --git a/src/common/displayport/inc/dp_mainlink.h b/src/common/displayport/inc/dp_mainlink.h
 --- a/src/common/displayport/inc/dp_mainlink.h
 +++ b/src/common/displayport/inc/dp_mainlink.h
-@@ -112,9 +112,24 @@ namespace DisplayPort
+@@ -112,9 +112,20 @@ namespace DisplayPort
      typedef struct
      {
          unsigned char       bcaps;
@@ -18,15 +18,11 @@ diff --git a/src/common/displayport/inc/dp_mainlink.h b/src/common/displayport/i
 +    {
 +        NvU32 rmStatus;
 +        NvU32 flags;
-+        NvU32 hdcp1xFlags;
-+        NvU32 hdcp22Flags;
-+        NvU32 attachPtFlags;
-+        NvU32 sinkIfType;
 +        NvBool valid;
 +    } HDCPRawState;
 +
      typedef enum
-@@ -237,6 +252,7 @@ namespace DisplayPort
+@@ -237,6 +248,7 @@ namespace DisplayPort
          virtual void configureHDCPValidateLink(HDCPValidateData &hdcpValidateData, NvU64 cN = HDCP_DUMMY_CN, NvU64 cKsv = HDCP_DUMMY_CKSV) = 0;
          virtual void forwardPendingKsvListReady(NvBool bKsvListReady) = 0;
          virtual void triggerACT() = 0;
@@ -48,7 +44,7 @@ diff --git a/src/common/displayport/inc/dp_evoadapter.h b/src/common/displayport
 diff --git a/src/common/displayport/src/dp_evoadapter.cpp b/src/common/displayport/src/dp_evoadapter.cpp
 --- a/src/common/displayport/src/dp_evoadapter.cpp
 +++ b/src/common/displayport/src/dp_evoadapter.cpp
-@@ -456,8 +456,39 @@ void EvoMainLink::configureHDCPValidateLink(HDCPValidateData &hdcpValidateData,
+@@ -456,8 +456,35 @@ void EvoMainLink::configureHDCPValidateLink(HDCPValidateData &hdcpValidateData,
          hdcpValidateData.vP[i] = paramsHdcpCtrl.vP[i];
      }
  
@@ -78,10 +74,6 @@ diff --git a/src/common/displayport/src/dp_evoadapter.cpp b/src/common/displaypo
 +    }
 +
 +    rawState.flags = params.flags;
-+    rawState.hdcp1xFlags = params.hdcp1xFlags;
-+    rawState.hdcp22Flags = params.hdcp22Flags;
-+    rawState.attachPtFlags = params.attachPtFlags;
-+    rawState.sinkIfType = params.sinkIfType;
 +    rawState.valid = NV_TRUE;
 +
 +    return true;
@@ -93,7 +85,7 @@ diff --git a/src/common/displayport/src/dp_evoadapter.cpp b/src/common/displaypo
 diff --git a/src/nvidia-modeset/include/dp/nvdp-device.h b/src/nvidia-modeset/include/dp/nvdp-device.h
 --- a/src/nvidia-modeset/include/dp/nvdp-device.h
 +++ b/src/nvidia-modeset/include/dp/nvdp-device.h
-@@ -29,6 +29,30 @@
+@@ -29,6 +29,26 @@
  extern "C" {
  #endif
  
@@ -110,10 +102,6 @@ diff --git a/src/nvidia-modeset/include/dp/nvdp-device.h b/src/nvidia-modeset/in
 +typedef struct {
 +    NvU32 rmStatus;
 +    NvU32 flags;
-+    NvU32 hdcp1xFlags;
-+    NvU32 hdcp22Flags;
-+    NvU32 attachPtFlags;
-+    NvU32 sinkIfType;
 +    NvBool valid;
 +} NvDPHDCPRawState;
 +
@@ -126,7 +114,7 @@ diff --git a/src/nvidia-modeset/include/dp/nvdp-device.h b/src/nvidia-modeset/in
 diff --git a/src/nvidia-modeset/src/dp/nvdp-device.cpp b/src/nvidia-modeset/src/dp/nvdp-device.cpp
 --- a/src/nvidia-modeset/src/dp/nvdp-device.cpp
 +++ b/src/nvidia-modeset/src/dp/nvdp-device.cpp
-@@ -29,6 +29,60 @@
+@@ -29,6 +29,56 @@
  #include "nvkms-dpy.h"
  
  #include "nvctassert.h"
@@ -176,10 +164,6 @@ diff --git a/src/nvidia-modeset/src/dp/nvdp-device.cpp b/src/nvidia-modeset/src/
 +
 +    pState->rmStatus = rawState.rmStatus;
 +    pState->flags = rawState.flags;
-+    pState->hdcp1xFlags = rawState.hdcp1xFlags;
-+    pState->hdcp22Flags = rawState.hdcp22Flags;
-+    pState->attachPtFlags = rawState.attachPtFlags;
-+    pState->sinkIfType = rawState.sinkIfType;
 +    pState->valid = rawState.valid;
 +
 +    return NV_DP_HDCP_QUERY_RESULT_SUCCESS;
