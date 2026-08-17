@@ -1,0 +1,3 @@
+cmake -S probes/vk-protected-probe -B build/vk-protected -G Ninja
+cmake --build build/vk-protected
+build/vk-protected/vk-protected-probe > artifacts/vk-protected.json

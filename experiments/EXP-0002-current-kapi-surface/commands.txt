@@ -1,0 +1,1 @@
+git grep -n -E 'queryHdcp|HdcpState|drm_connector_attach_content_protection_property' e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb -- kernel-open/common/inc/nvkms-kapi.h src/nvidia-modeset/kapi kernel-open/nvidia-drm/nvidia-drm-connector.c

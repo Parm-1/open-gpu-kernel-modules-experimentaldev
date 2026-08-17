@@ -1,0 +1,1 @@
+scripts/collect-native-baseline.sh artifacts/native-baseline

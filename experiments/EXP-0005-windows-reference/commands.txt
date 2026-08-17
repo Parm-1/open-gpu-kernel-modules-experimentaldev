@@ -1,0 +1,1 @@
+powershell -ExecutionPolicy Bypass -File windows/collect-windows-reference.ps1 -OutputDirectory artifacts\windows-reference

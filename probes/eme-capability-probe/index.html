@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>EME capability probe</title>
+<style>body{font:16px system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem}button{padding:.6rem 1rem}pre{white-space:pre-wrap;background:#111;color:#eee;padding:1rem;overflow:auto}</style>
+<h1>EME capability probe</h1>
+<p>This page requests key-system access only. It does not contact a license server, create a MediaKeys session, load media, or inspect CDM internals.</p>
+<button id="run">Run probe</button>
+<pre id="output">Not run.</pre>
+<script>
+const tests=[
+{keySystem:'com.widevine.alpha',robustness:''},
+{keySystem:'com.widevine.alpha',robustness:'SW_SECURE_CRYPTO'},
+{keySystem:'com.widevine.alpha',robustness:'SW_SECURE_DECODE'},
+{keySystem:'com.widevine.alpha',robustness:'HW_SECURE_CRYPTO'},
+{keySystem:'com.widevine.alpha',robustness:'HW_SECURE_ALL'},
+{keySystem:'com.microsoft.playready.recommendation',robustness:''},
+{keySystem:'com.microsoft.playready.recommendation',robustness:'3000'},
+{keySystem:'com.microsoft.playready.recommendation.3000',robustness:''}
+];
+async function probe(test){
+ const videoCapability={contentType:'video/mp4; codecs="avc1.640028"'};
+ if(test.robustness)videoCapability.robustness=test.robustness;
+ const config=[{initDataTypes:['cenc'],distinctiveIdentifier:'optional',persistentState:'optional',sessionTypes:['temporary'],videoCapabilities:[videoCapability]}];
+ try{const access=await navigator.requestMediaKeySystemAccess(test.keySystem,config);return{...test,accepted:true,configuration:access.getConfiguration()};}
+ catch(error){return{...test,accepted:false,error:{name:error?.name??'UnknownError',message:String(error?.message??error)}};}
+}
+document.querySelector('#run').addEventListener('click',async()=>{
+ const output=document.querySelector('#output');output.textContent='Running…';const results=[];
+ for(const test of tests)results.push(await probe(test));
+ output.textContent=JSON.stringify({schema_version:1,user_agent:navigator.userAgent,secure_context:window.isSecureContext,results},null,2);
+});
+</script>
