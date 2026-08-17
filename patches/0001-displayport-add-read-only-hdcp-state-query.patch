@@ -1,8 +1,13 @@
 diff --git a/src/common/displayport/inc/dp_mainlink.h b/src/common/displayport/inc/dp_mainlink.h
 --- a/src/common/displayport/inc/dp_mainlink.h
 +++ b/src/common/displayport/inc/dp_mainlink.h
-@@ -95,6 +95,21 @@ namespace DisplayPort
-         NvU32 dfpFlags;
+@@ -112,9 +112,24 @@ namespace DisplayPort
+     typedef struct
+     {
+         unsigned char       bcaps;
+         unsigned char       bksv[5];
+         bool                hdcpCapable;
+         unsigned char       updMask;
      }RmDfpCache;
  
 +    /*
@@ -21,20 +26,18 @@ diff --git a/src/common/displayport/inc/dp_mainlink.h b/src/common/displayport/i
 +    } HDCPRawState;
 +
      typedef enum
-     {
-         NORMAL_LINK_TRAINING,  // full LT
-@@ -265,6 +280,7 @@ namespace DisplayPort
+@@ -237,6 +252,7 @@ namespace DisplayPort
+         virtual void configureHDCPValidateLink(HDCPValidateData &hdcpValidateData, NvU64 cN = HDCP_DUMMY_CN, NvU64 cKsv = HDCP_DUMMY_CKSV) = 0;
          virtual void forwardPendingKsvListReady(NvBool bKsvListReady) = 0;
          virtual void triggerACT() = 0;
          virtual void configureHDCPGetHDCPState(HDCPState &hdcpState) = 0;
 +        virtual bool queryHDCPRawState(HDCPRawState &rawState) = 0;
  
          virtual NvU32 headToStream(NvU32 head, bool bSidebandMessageSupported,
-             DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID streamIdentifier = DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID_PRIMARY) = 0;
 diff --git a/src/common/displayport/inc/dp_evoadapter.h b/src/common/displayport/inc/dp_evoadapter.h
 --- a/src/common/displayport/inc/dp_evoadapter.h
 +++ b/src/common/displayport/inc/dp_evoadapter.h
-@@ -340,6 +340,7 @@ namespace DisplayPort
+@@ -390,6 +390,7 @@ namespace DisplayPort
          void configureHDCPRenegotiate(NvU64 cN = HDCP_DUMMY_CN, NvU64 cKsv = HDCP_DUMMY_CKSV, bool bForceReAuth = false,
                                        bool bRxIDMsgPending = false);
          void configureHDCPGetHDCPState(HDCPState &hdcpState);
@@ -45,7 +48,11 @@ diff --git a/src/common/displayport/inc/dp_evoadapter.h b/src/common/displayport
 diff --git a/src/common/displayport/src/dp_evoadapter.cpp b/src/common/displayport/src/dp_evoadapter.cpp
 --- a/src/common/displayport/src/dp_evoadapter.cpp
 +++ b/src/common/displayport/src/dp_evoadapter.cpp
-@@ -476,6 +476,37 @@ void EvoMainLink::configureHDCPValidateLink(HDCPValidateData &hdcpValidateData,
+@@ -456,8 +456,39 @@ void EvoMainLink::configureHDCPValidateLink(HDCPValidateData &hdcpValidateData,
+         hdcpValidateData.vP[i] = paramsHdcpCtrl.vP[i];
+     }
+ 
+     hdcpValidateData.aN = paramsHdcpCtrl.aN[0]; // Only primary link An for DP use.
      hdcpValidateData.mP = paramsHdcpCtrl.mP;
  }
  
@@ -116,11 +123,11 @@ diff --git a/src/nvidia-modeset/include/dp/nvdp-device.h b/src/nvidia-modeset/in
 +
  void nvDPDeviceSetPowerState(NVDpyEvoPtr pDpyEvo, NvBool on);
  unsigned int nvDPGetEDIDSize(const NVDpyEvoRec *pDpyEvo);
- NvBool nvDPGetEDID(const NVDpyEvoRec *pDpyEvo, void *buffer, unsigned int size);
 diff --git a/src/nvidia-modeset/src/dp/nvdp-device.cpp b/src/nvidia-modeset/src/dp/nvdp-device.cpp
 --- a/src/nvidia-modeset/src/dp/nvdp-device.cpp
 +++ b/src/nvidia-modeset/src/dp/nvdp-device.cpp
-@@ -31,6 +31,60 @@
+@@ -29,6 +29,60 @@
+ #include "nvkms-dpy.h"
  
  #include "nvctassert.h"
  
