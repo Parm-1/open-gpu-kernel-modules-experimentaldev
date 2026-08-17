@@ -1,0 +1,69 @@
+name: apply-read-only-nvidia-drm-probe
+
+on:
+  push:
+    branches:
+      - agent/read-only-nvkms-hdcp-query
+    paths:
+      - 'scripts/apply-read-only-nvidia-drm-probe.py'
+      - '.github/workflows/apply-read-only-nvidia-drm-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  transform-build-and-push:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/read-only-nvkms-hdcp-query
+      - name: Install build dependencies and generic kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential linux-headers-generic
+      - name: Apply opt-in read-only nvidia-drm probe
+        run: python3 scripts/apply-read-only-nvidia-drm-probe.py
+      - name: Verify safety boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff > /tmp/nvidia-drm-probe.diff
+          grep -q 'module_param_named(hdcp_probe' /tmp/nvidia-drm-probe.diff
+          grep -q 'HDCP_PROBE' /tmp/nvidia-drm-probe.diff
+          if grep -E 'drm_connector_attach_content_protection_property|_SET_TYPE|_RENEGOTIATE|HDCP_CTRL' /tmp/nvidia-drm-probe.diff; then
+            echo 'Forbidden control/property symbol found in read-only diagnostic.' >&2
+            exit 1
+          fi
+          test "$(git diff --name-only | grep -c '^kernel-open/nvidia-drm/')" -eq 4
+      - name: Select kernel headers
+        id: headers
+        shell: bash
+        run: |
+          KDIR=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' | sort -V | tail -n1)
+          test -n "$KDIR"
+          echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+      - name: Build modules without installing
+        run: make modules -j2 SYSSRC='${{ steps.headers.outputs.kdir }}' SYSOUT='${{ steps.headers.outputs.kdir }}'
+      - name: Commit compiled nvidia-drm diagnostic source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            kernel-open/nvidia-drm/nvidia-drm-os-interface.c \
+            kernel-open/nvidia-drm/nvidia-drm-os-interface.h \
+            kernel-open/nvidia-drm/nvidia-drm-linux.c \
+            kernel-open/nvidia-drm/nvidia-drm-connector.c
+          git commit -m 'nvidia-drm: add opt-in read-only HDCP diagnostic'
+          git push origin HEAD:agent/read-only-nvkms-hdcp-query
