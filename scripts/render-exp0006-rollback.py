@@ -30,11 +30,36 @@ def valid_sha256(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def validate_module_record(
+    name: str,
+    record: dict[str, Any],
+    expected_version: str,
+    *,
+    require_loaded: bool,
+) -> list[str]:
+    errors: list[str] = []
+    if require_loaded and record.get("loaded") is not True:
+        errors.append(f"{name}: was not loaded in the known-good snapshot")
+    for field in ("filename", "version", "vermagic"):
+        if not record.get(field):
+            errors.append(f"{name}: missing {field}")
+    if not valid_sha256(record.get("sha256")):
+        errors.append(f"{name}: invalid or missing sha256")
+    if record.get("version") != expected_version:
+        errors.append(f"{name}: version does not match expected_version")
+    on_disk_srcversion = record.get("srcversion")
+    loaded_srcversion = record.get("loaded_srcversion")
+    if on_disk_srcversion and loaded_srcversion and on_disk_srcversion != loaded_srcversion:
+        errors.append(f"{name}: loaded srcversion differs from on-disk srcversion")
+    return errors
+
+
 def validate_snapshot(snapshot: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     expected = snapshot.get("expected_version")
     if not isinstance(expected, str) or not expected:
         errors.append("missing expected_version")
+        expected = ""
     if not snapshot.get("kernel_release"):
         errors.append("missing kernel_release")
 
@@ -44,27 +69,21 @@ def validate_snapshot(snapshot: dict[str, Any]) -> list[str]:
         if record is None:
             errors.append(f"missing module record: {name}")
             continue
-        if record.get("loaded") is not True:
-            errors.append(f"{name}: was not loaded in the known-good snapshot")
-        for field in ("filename", "version", "vermagic"):
-            if not record.get(field):
-                errors.append(f"{name}: missing {field}")
-        if not valid_sha256(record.get("sha256")):
-            errors.append(f"{name}: invalid or missing sha256")
-        if expected and record.get("version") != expected:
-            errors.append(f"{name}: version does not match expected_version")
+        errors.extend(
+            validate_module_record(
+                name, record, expected, require_loaded=True
+            )
+        )
 
     for name in OPTIONAL_MODULES:
         record = records.get(name)
         if not record or record.get("loaded") is not True:
             continue
-        for field in ("filename", "version", "vermagic"):
-            if not record.get(field):
-                errors.append(f"{name}: loaded but missing {field}")
-        if not valid_sha256(record.get("sha256")):
-            errors.append(f"{name}: loaded but has invalid or missing sha256")
-        if expected and record.get("version") != expected:
-            errors.append(f"{name}: loaded version does not match expected_version")
+        errors.extend(
+            validate_module_record(
+                name, record, expected, require_loaded=True
+            )
+        )
     return errors
 
 
@@ -74,13 +93,22 @@ def shell_test_module(name: str, record: dict[str, Any]) -> list[str]:
     expected_hash = shlex.quote(str(record["sha256"]))
     expected_version = shlex.quote(str(record["version"]))
     expected_vermagic = shlex.quote(str(record["vermagic"]))
-    return [
+    lines = [
         f"test -d /sys/module/{quoted_name}",
         f"test \"$(modinfo -n {quoted_name})\" = {expected_path}",
         f"test \"$(sha256sum \"$(modinfo -n {quoted_name})\" | awk '{{print $1}}')\" = {expected_hash}",
         f"test \"$(modinfo -F version {quoted_name})\" = {expected_version}",
         f"test \"$(modinfo -F vermagic {quoted_name})\" = {expected_vermagic}",
     ]
+    if record.get("srcversion"):
+        lines.append(
+            f"test \"$(modinfo -F srcversion {quoted_name})\" = {shlex.quote(str(record['srcversion']))}"
+        )
+    if record.get("loaded_srcversion"):
+        lines.append(
+            f"test \"$(cat /sys/module/{quoted_name}/srcversion)\" = {shlex.quote(str(record['loaded_srcversion']))}"
+        )
+    return lines
 
 
 def render(snapshot: dict[str, Any]) -> str:
@@ -112,21 +140,23 @@ def render(snapshot: dict[str, Any]) -> str:
         "",
         "## Known-good module identity",
         "",
-        "| Module | Loaded at snapshot | Path | SHA-256 | Version | Vermagic |",
-        "|---|---:|---|---|---|---|",
+        "| Module | Loaded | Path | SHA-256 | Version | Vermagic | On-disk srcversion | Loaded srcversion |",
+        "|---|---:|---|---|---|---|---|---|",
     ]
     for name in ALL_MODULES:
         record = records.get(name)
         if record is None:
             continue
         lines.append(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |".format(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |".format(
                 name,
                 "yes" if record.get("loaded") else "no",
                 record.get("filename") or "unavailable",
                 record.get("sha256") or "unavailable",
                 record.get("version") or "unavailable",
                 record.get("vermagic") or "unavailable",
+                record.get("srcversion") or "unavailable",
+                record.get("loaded_srcversion") or "unavailable",
             )
         )
 
@@ -166,7 +196,7 @@ def render(snapshot: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "# Verify the restored known-good files, hashes, versions, vermagic, and loaded state.",
+            "# Verify the restored known-good files, hashes, versions, vermagic, srcversion, and loaded state.",
         ]
     )
     for name in loaded_modules:
@@ -185,7 +215,7 @@ def render(snapshot: dict[str, Any]) -> str:
             "sudo systemctl isolate graphical.target",
             "```",
             "",
-            "If an unload, load, path, hash, version, vermagic, parameter, or graphical-target check fails, remain in text mode and use the independently tested known-good boot entry. Do not force a module operation and do not continue the experiment.",
+            "If an unload, load, path, hash, version, vermagic, srcversion, parameter, or graphical-target check fails, remain in text mode and use the independently tested known-good boot entry. Do not force a module operation and do not continue the experiment.",
             "",
             "## Pre-execution manual checks",
             "",
@@ -193,6 +223,7 @@ def render(snapshot: dict[str, Any]) -> str:
             "- [ ] SSH and local TTY access were tested in the current boot.",
             "- [ ] The known-good boot entry was tested.",
             "- [ ] The module paths and hashes above still match the filesystem.",
+            "- [ ] Any unavailable srcversion comparison was resolved or documented.",
             "- [ ] Explicit approval covers unload, local `insmod`, restoration, and any separate reboot.",
             "",
         ]
@@ -207,21 +238,25 @@ def self_test() -> None:
         "expected_version": "610.57.04",
         "nvidia_drm_parameters": {"modeset": "Y", "fbdev": "N"},
         "modules": [
-            {"name": "nvidia", "filename": "/lib/nvidia.ko", "sha256": "a" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "loaded": True},
-            {"name": "nvidia_modeset", "filename": "/lib/nvidia-modeset.ko", "sha256": "b" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "loaded": True},
-            {"name": "nvidia_drm", "filename": "/lib/nvidia-drm.ko", "sha256": "c" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "loaded": True},
-            {"name": "nvidia_uvm", "filename": "/lib/nvidia-uvm.ko", "sha256": "d" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "loaded": True},
+            {"name": "nvidia", "filename": "/lib/nvidia.ko", "sha256": "a" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "srcversion": "SRC1", "loaded_srcversion": "SRC1", "loaded": True},
+            {"name": "nvidia_modeset", "filename": "/lib/nvidia-modeset.ko", "sha256": "b" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "srcversion": "SRC2", "loaded_srcversion": "SRC2", "loaded": True},
+            {"name": "nvidia_drm", "filename": "/lib/nvidia-drm.ko", "sha256": "c" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "srcversion": "SRC3", "loaded_srcversion": "SRC3", "loaded": True},
+            {"name": "nvidia_uvm", "filename": "/lib/nvidia-uvm.ko", "sha256": "d" * 64, "version": "610.57.04", "vermagic": "6.8.0-test SMP", "srcversion": "SRC4", "loaded_srcversion": "SRC4", "loaded": True},
         ],
     }
     text = render(snapshot)
     assert "unload_nvidia_stack" in text
     assert "sudo modprobe nvidia_uvm" in text
     assert "sha256sum" in text
+    assert "modinfo -F srcversion" in text
     assert "/parameters/modeset" in text
     assert validate_snapshot(snapshot) == []
     broken = json.loads(json.dumps(snapshot))
     broken["modules"][0]["loaded"] = False
     assert validate_snapshot(broken)
+    broken_srcversion = json.loads(json.dumps(snapshot))
+    broken_srcversion["modules"][0]["loaded_srcversion"] = "OTHER"
+    assert validate_snapshot(broken_srcversion)
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "snapshot.json"
         path.write_text(json.dumps(snapshot))
