@@ -1,0 +1,113 @@
+name: mfcdm-probe
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'probes/mfcdm/**'
+      - 'docs/implementation/mfcdm-first-failure-probe.md'
+      - 'docs/reviews/mfcdm-probe-source-review.md'
+      - 'experiments/EXP-0007-mfcdm-first-failure/**'
+      - '.github/workflows/mfcdm-probe.yml'
+  pull_request:
+    paths:
+      - 'probes/mfcdm/**'
+      - 'docs/implementation/mfcdm-first-failure-probe.md'
+      - 'docs/reviews/mfcdm-probe-source-review.md'
+      - 'experiments/EXP-0007-mfcdm-first-failure/**'
+      - '.github/workflows/mfcdm-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-inspect:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce source safety boundary
+        shell: pwsh
+        run: |
+          $source = Get-Content probes/mfcdm/mfcdm-probe.cpp -Raw
+          $forbidden = @{
+            'CDM access creation' = '\bCreateContentDecryptionModuleAccess\s*\('
+            'CDM creation' = '->\s*CreateContentDecryptionModule\s*\('
+            'session creation' = '->\s*CreateSession\s*\('
+            'request generation' = '->\s*GenerateRequest\s*\('
+            'session update' = '->\s*Update\s*\('
+            'server certificate' = '->\s*SetServerCertificate\s*\('
+            'WinHTTP' = '\bWinHttp[A-Za-z0-9_]*\s*\('
+            'WinINet' = '\bInternet(Open|Connect|ReadFile|OpenUrl)[A-Za-z0-9_]*\s*\('
+            'Winsock startup' = '\bWSAStartup\s*\('
+            'URLMon download' = '\bURLDownloadToFile[A-Za-z]*\s*\('
+          }
+          foreach ($entry in $forbidden.GetEnumerator()) {
+            if ($source -match $entry.Value) {
+              throw "Forbidden $($entry.Key) operation found in source"
+            }
+          }
+          if ($source -match 'com\.microsoft\.playready|com\.widevine\.alpha|org\.w3\.clearkey') {
+            throw 'A vendor key-system identifier is hardcoded in source'
+          }
+      - name: Configure MSVC build
+        run: cmake -S probes/mfcdm -B build/mfcdm -A x64
+      - name: Build with warnings as errors
+        run: cmake --build build/mfcdm --config Release --parallel 2
+      - name: Run deterministic self-test
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path build/mfcdm/Release/mfcdm-probe.exe
+          $output = & $exe --self-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "self-test returned $LASTEXITCODE"
+          }
+          if (($output -join "`n") -ne 'mfcdm-probe self-test passed') {
+            throw "unexpected self-test output: $output"
+          }
+          & $exe --content-type 'video/mp4' 1>$env:RUNNER_TEMP/usage.stdout.txt 2>$env:RUNNER_TEMP/usage.stderr.txt
+          if ($LASTEXITCODE -ne 2) {
+            throw "usage negative control returned $LASTEXITCODE instead of 2"
+          }
+      - name: Inspect direct PE imports
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path build/mfcdm/Release/mfcdm-probe.exe
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022" `
+            -Filter dumpbin.exe -Recurse -ErrorAction Stop |
+            Where-Object FullName -Match '\\Hostx64\\x64\\dumpbin\.exe$' |
+            Select-Object -First 1
+          if (-not $dumpbin) {
+            throw '64-bit dumpbin.exe not found'
+          }
+          & $dumpbin.FullName /imports $exe | Tee-Object -FilePath imports.txt
+          if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin returned $LASTEXITCODE"
+          }
+          $imports = Get-Content imports.txt -Raw
+          foreach ($dll in @('WINHTTP.dll', 'WININET.dll', 'WS2_32.dll', 'URLMON.dll')) {
+            if ($imports -match [regex]::Escape($dll)) {
+              throw "Forbidden direct network import: $dll"
+            }
+          }
+      - name: Package build evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifact -ErrorAction Stop | Out-Null
+          Copy-Item build/mfcdm/Release/mfcdm-probe.exe artifact/
+          Copy-Item imports.txt artifact/
+          $hash = (Get-FileHash artifact/mfcdm-probe.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  mfcdm-probe.exe" | Set-Content artifact/mfcdm-probe.sha256 -Encoding ascii
+          @(
+            'state_claim=SOURCE_PRESENT'
+            'windows_runtime_probe_executed=false'
+            'wine_runtime_probe_executed=false'
+            'license_or_session_operation=false'
+          ) | Set-Content artifact/build-verdict.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mfcdm-probe-windows-x64
+          path: artifact/

@@ -1,0 +1,12 @@
+# Build-only CI command
+cmake -S probes/mfcdm -B build/mfcdm -A x64
+cmake --build build/mfcdm --config Release --parallel
+build/mfcdm/Release/mfcdm-probe.exe --self-test
+
+# Runtime commands remain NOT_RUN. Supply an explicit key system only when the
+# experiment record also captures the same input on Windows and Wine.
+mfcdm-probe.exe > windows-infrastructure.json
+wine mfcdm-probe.exe > wine-infrastructure.json
+
+mfcdm-probe.exe --key-system '<explicit-identifier>' --content-type '<explicit-content-type>' > windows-type.json
+wine mfcdm-probe.exe --key-system '<explicit-identifier>' --content-type '<explicit-content-type>' > wine-type.json
