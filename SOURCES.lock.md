@@ -4,13 +4,15 @@ Changing a baseline requires a recorded architecture decision.
 
 ## NVIDIA open GPU kernel modules
 
-| Role | Revision | Commit |
-|---|---|---|
-| Pre-change control | `590.48.01` | `2ccbad25e1af6a6ee6f38cf569f89f8b65d658ab` |
-| First known non-stub source | `595.44.02` | `2c7bfb47060233bda7c37c8065c0ddcac0d3da05` |
-| Primary baseline | `610.57.04` | `e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb` |
+| Role | Revision | Commit | Advertised fork ref |
+|---|---|---|---|
+| Pre-change control | `590.48.01` | `2ccbad25e1af6a6ee6f38cf569f89f8b65d658ab` | `source/nvidia-590.48.01` |
+| First known non-stub source | `595.44.02` | `2c7bfb47060233bda7c37c8065c0ddcac0d3da05` | `source/nvidia-595.44.02` |
+| Primary baseline | `610.57.04` | `e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb` | `main` |
 
 Repository: `https://github.com/NVIDIA/open-gpu-kernel-modules`
+
+The two `source/nvidia-*` branches exist only to make otherwise unadvertised historical snapshot objects reproducibly fetchable in clean CI checkouts. They must remain pinned to the exact commits above and must not receive development commits.
 
 ## Chromium
 
