@@ -36,15 +36,20 @@ This record is intentionally incomplete until a human fills it in. Committing th
 
 Mark each operation separately. Unmarked operations remain prohibited.
 
-- [ ] Stop the graphical target.
-- [ ] Unload the currently loaded NVIDIA display modules without force.
-- [ ] Load the exact locally built modules recorded in the approved manifest.
+- [ ] Stop the graphical target for the default-off negative control.
+- [ ] Unload the currently loaded NVIDIA modules without force for the negative control.
+- [ ] Load the exact locally built modules recorded in the approved manifest for the negative control.
 - [ ] Run the default-off negative-control session.
 - [ ] Restore and verify the recorded known-good module stack after the negative control.
-- [ ] Reboot to the known-good boot entry between sessions.
-- [ ] Run the `hdcp_probe=1` read-only session.
-- [ ] Restore and verify the recorded known-good module stack after the enabled session.
-- [ ] Reboot to the known-good boot entry after the enabled session.
+- [ ] Reboot to the known-good boot entry before enabled run 1.
+- [ ] Stop, unload, and load the identical approved build for enabled run 1.
+- [ ] Run enabled read-only run 1 with `hdcp_probe=1`.
+- [ ] Restore and verify the recorded known-good module stack after enabled run 1.
+- [ ] Reboot to the known-good boot entry before enabled run 2.
+- [ ] Stop, unload, and load the identical approved build for enabled run 2.
+- [ ] Run enabled read-only run 2 with `hdcp_probe=1`.
+- [ ] Restore and verify the recorded known-good module stack after enabled run 2.
+- [ ] Reboot to the known-good boot entry after enabled run 2.
 
 This approval does **not** authorize HDCP authentication, Type 0/Type 1 selection, ECF changes, standard KMS content-protection properties, DRM/CDM work, protected media playback, service testing, key/certificate/license collection, or publication to an external project/vendor.
 
@@ -61,18 +66,34 @@ This approval does **not** authorize HDCP authentication, Type 0/Type 1 selectio
 - Session end:
 - Artifact directory:
 - Approved build manifest reverified immediately before load: `YES` / `NO`
+- Loaded-build verifier passed: `YES` / `NO`
+- Successful direct-DP `modetest` and topology check: `YES` / `NO`
 - No `HDCP_PROBE` record observed: `YES` / `NO`
 - Known-good restoration verified: `YES` / `NO`
 - Notes:
 
-## Enabled read-only session result
+## Enabled read-only run 1 result
 
 - Session start:
 - Session end:
 - Artifact directory:
 - Approved build manifest reverified immediately before load: `YES` / `NO`
-- `hdcp_probe` parameter verified as `Y`: `YES` / `NO`
+- Loaded-build verifier passed with `hdcp_probe=Y`: `YES` / `NO`
+- Successful direct-DP `modetest` and topology check: `YES` / `NO`
 - Decoder completed: `YES` / `NO`
+- Known-good restoration verified: `YES` / `NO`
+- Notes:
+
+## Enabled read-only run 2 result
+
+- Session start:
+- Session end:
+- Artifact directory:
+- Approved build manifest reverified immediately before load: `YES` / `NO`
+- Loaded-build verifier passed with `hdcp_probe=Y`: `YES` / `NO`
+- Successful direct-DP `modetest` and topology check: `YES` / `NO`
+- Decoder completed: `YES` / `NO`
+- Result matches run 1 under unchanged controls: `YES` / `NO`
 - Known-good restoration verified: `YES` / `NO`
 - Preliminary Gate 1 verdict: `NOT_ASSIGNED`
 - Notes:
