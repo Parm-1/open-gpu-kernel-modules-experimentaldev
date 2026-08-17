@@ -7,11 +7,15 @@ This record is intentionally incomplete until a human fills it in. Committing th
 - Repository commit:
 - NVIDIA source version: `610.57.04`
 - Target kernel release:
+- Operator-defined machine alias (do not use a serial number):
+- Approved preflight directory:
 - Preflight `artifacts.sha256` SHA-256:
 - `known-good-modules.json` SHA-256:
+- `rollback-plan.md` SHA-256:
+- Approved exact-kernel build directory (absolute local path):
 - Exact-kernel `manifest.json` SHA-256:
 - Build `artifacts.sha256` SHA-256:
-- Operator-defined machine alias (do not use a serial number):
+- Experimental module signer identity, or `UNSIGNED_WITH_SECURE_BOOT_DISABLED`:
 
 ## Recovery evidence
 
@@ -19,11 +23,14 @@ This record is intentionally incomplete until a human fills it in. Committing th
 - [ ] Known-good kernel/NVIDIA boot entry has been boot-tested.
 - [ ] SSH from a second device has been tested in the current boot.
 - [ ] Local TTY login has been tested.
-- [ ] Machine-specific rollback plan is stored offline.
+- [ ] Machine-specific rollback plan and its source snapshot are stored offline.
+- [ ] Known-good loaded modules match their recorded on-disk paths, hashes, versions, `vermagic`, and available `srcversion`.
+- [ ] Build manifest records successful pre-clean, exact-kernel build, post-clean, and clean-tree verification.
 - [ ] Installed userspace, known-good modules, experimental modules, and GSP firmware all match `610.57.04`.
 - [ ] Secure Boot/signature handling is resolved and tested.
 - [ ] One direct NVIDIA DisplayPort SST output is active at SDR 1920×1080 60 Hz.
 - [ ] HDR, VRR, MST, adapters, docks, KVMs, receivers, capture devices, and secondary outputs are absent or disabled.
+- [ ] Baseline and diagnostic artifacts were reviewed for local paths or other identifying context before any sharing.
 
 ## Scope of approval
 
@@ -31,11 +38,13 @@ Mark each operation separately. Unmarked operations remain prohibited.
 
 - [ ] Stop the graphical target.
 - [ ] Unload the currently loaded NVIDIA display modules without force.
-- [ ] Load the exact locally built modules recorded in the build manifest.
+- [ ] Load the exact locally built modules recorded in the approved manifest.
 - [ ] Run the default-off negative-control session.
+- [ ] Restore and verify the recorded known-good module stack after the negative control.
+- [ ] Reboot to the known-good boot entry between sessions.
 - [ ] Run the `hdcp_probe=1` read-only session.
-- [ ] Restore and verify the recorded known-good module stack.
-- [ ] Reboot to the known-good boot entry after a session.
+- [ ] Restore and verify the recorded known-good module stack after the enabled session.
+- [ ] Reboot to the known-good boot entry after the enabled session.
 
 This approval does **not** authorize HDCP authentication, Type 0/Type 1 selection, ECF changes, standard KMS content-protection properties, DRM/CDM work, protected media playback, service testing, key/certificate/license collection, or publication to an external project/vendor.
 
@@ -46,11 +55,24 @@ This approval does **not** authorize HDCP authentication, Type 0/Type 1 selectio
 - Approval statement:
 - Additional constraints:
 
-## Session result
+## Negative-control session result
 
 - Session start:
 - Session end:
 - Artifact directory:
-- Restoration verified:
+- Approved build manifest reverified immediately before load: `YES` / `NO`
+- No `HDCP_PROBE` record observed: `YES` / `NO`
+- Known-good restoration verified: `YES` / `NO`
+- Notes:
+
+## Enabled read-only session result
+
+- Session start:
+- Session end:
+- Artifact directory:
+- Approved build manifest reverified immediately before load: `YES` / `NO`
+- `hdcp_probe` parameter verified as `Y`: `YES` / `NO`
+- Decoder completed: `YES` / `NO`
+- Known-good restoration verified: `YES` / `NO`
 - Preliminary Gate 1 verdict: `NOT_ASSIGNED`
 - Notes:
