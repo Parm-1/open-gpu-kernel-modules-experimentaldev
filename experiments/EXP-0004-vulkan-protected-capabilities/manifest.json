@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-08-17T00:00:00-04:00",
+  "source_baseline": "e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb",
+  "state_claim": "CAPABILITY_ADVERTISED",
+  "status": "BLOCKED",
+  "requires_native_linux": true,
+  "requires_windows": false,
+  "requires_module_load": false,
+  "secrets_collected": false,
+  "id": "EXP-0004-vulkan-protected-capabilities",
+  "title": "Inventory Vulkan protected-resource capabilities",
+  "question": "What protected memory, queue, WSI, and video capabilities does the exact NVIDIA Linux stack advertise?",
+  "acceptance_criteria": ["Every queried capability is reported as true, false, unsupported, or not tested; no GPU-model inference."]
+}
