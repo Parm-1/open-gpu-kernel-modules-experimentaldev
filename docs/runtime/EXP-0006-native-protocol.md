@@ -19,13 +19,10 @@ Use native x86-64 Linux, SDR 1920×1080 60 Hz, no secondary output, MST, adapter
 Run from a clean checkout of the merged repository on the native test machine. This phase writes evidence files but never changes the driver or boot state.
 
 ```bash
-set -u
+set -euo pipefail
 preflight_dir="artifacts/EXP-0006-preflight-$(date -u +%Y%m%dT%H%M%SZ)"
-preflight_status=0
-python3 scripts/exp0006-preflight.py --output-dir "$preflight_dir" \
-  || preflight_status=$?
 
-if [[ "$preflight_status" -eq 0 ]]; then
+if python3 scripts/exp0006-preflight.py --output-dir "$preflight_dir"; then
   python3 scripts/render-exp0006-rollback.py \
     "$preflight_dir/known-good-modules.json" \
     --output "$preflight_dir/rollback-plan.md"
@@ -37,6 +34,7 @@ if [[ "$preflight_status" -eq 0 ]]; then
     sha256sum -c artifacts.sha256
   )
 else
+  preflight_status=$?
   printf 'EXP-0006 preflight blocked with status %s; inspect %s and rerun in a new directory after fixing every blocker.\n' \
     "$preflight_status" "$preflight_dir" >&2
   exit "$preflight_status"
@@ -68,6 +66,7 @@ Approval for source work or building is not approval to load modules. A reboot i
 Build on the native test machine against the running kernel. GitHub's generic-header build is useful CI evidence but is not a runtime artifact.
 
 ```bash
+set -euo pipefail
 build_dir="artifacts/EXP-0006-build-$(date -u +%Y%m%dT%H%M%SZ)"
 python3 scripts/build-exp0006.py --output-dir "$build_dir"
 (
@@ -104,6 +103,7 @@ When Secure Boot enforcement is active, do not attempt an unsigned module. The b
 Variables do not survive a clean boot. At the start of **every** runtime session, set the absolute build path and manifest hash copied from the completed approval record. Placeholder values below are deliberately invalid and must be replaced.
 
 ```bash
+set -euo pipefail
 approved_build_dir='/REPLACE/WITH/ABSOLUTE/APPROVED/BUILD/DIRECTORY'
 approved_manifest_sha256='REPLACE_WITH_64_LOWERCASE_HEX_CHARACTERS'
 
@@ -189,6 +189,10 @@ scripts/collect-native-baseline.sh "$artifact_dir/preload-baseline"
 cp "$build_dir/manifest.json" "$artifact_dir/approved-build-manifest.json"
 printf '%s  approved-build-manifest.json\n' "$approved_manifest_sha256" \
   > "$artifact_dir/approved-build-manifest.sha256"
+(
+  cd "$artifact_dir"
+  sha256sum -c approved-build-manifest.sha256
+)
 start_time="$(date --iso-8601=seconds)"
 
 sudo systemctl isolate multi-user.target
@@ -228,6 +232,10 @@ scripts/collect-native-baseline.sh "$artifact_dir/preload-baseline"
 cp "$build_dir/manifest.json" "$artifact_dir/approved-build-manifest.json"
 printf '%s  approved-build-manifest.json\n' "$approved_manifest_sha256" \
   > "$artifact_dir/approved-build-manifest.sha256"
+(
+  cd "$artifact_dir"
+  sha256sum -c approved-build-manifest.sha256
+)
 start_time="$(date --iso-8601=seconds)"
 
 sudo systemctl isolate multi-user.target
