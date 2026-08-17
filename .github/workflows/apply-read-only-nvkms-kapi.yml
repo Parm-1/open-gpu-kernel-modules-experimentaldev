@@ -34,10 +34,17 @@ jobs:
           set -euo pipefail
           git diff --check
           cmp kernel-open/common/inc/nvkms-kapi.h src/nvidia-modeset/kapi/interface/nvkms-kapi.h
-          git diff | grep -q 'NVKMS_IOCTL_QUERY_DPY_HDCP_STATE'
-          git diff | grep -q 'queryHdcpState'
-          ! git diff | grep -E 'drm_connector_attach_content_protection_property|_SET_TYPE|_RENEGOTIATE' >/dev/null
-          test -z "$(git diff --name-only | grep 'kernel-open/nvidia-drm' || true)"
+          git diff > /tmp/nvkms-kapi.diff
+          grep -q 'NVKMS_IOCTL_QUERY_DPY_HDCP_STATE' /tmp/nvkms-kapi.diff
+          grep -q 'queryHdcpState' /tmp/nvkms-kapi.diff
+          if grep -E 'drm_connector_attach_content_protection_property|_SET_TYPE|_RENEGOTIATE' /tmp/nvkms-kapi.diff; then
+            echo 'Forbidden control/property symbol found in read-only patch.' >&2
+            exit 1
+          fi
+          if git diff --name-only | grep 'kernel-open/nvidia-drm' >/dev/null; then
+            echo 'Read-only KAPI patch unexpectedly modifies nvidia-drm.' >&2
+            exit 1
+          fi
       - name: Select kernel headers
         id: headers
         shell: bash
