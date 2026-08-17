@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 OUT_DIR="${1:-artifacts/native-baseline-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUT_PARENT="$(dirname "$OUT_DIR")"
@@ -17,9 +17,12 @@ run() {
         printf '$'
         printf ' %q' "$@"
         printf '\n'
-        "$@"
+        if "$@"; then
+            status=0
+        else
+            status=$?
+        fi
     } >"$OUT_DIR/raw/${name}.stdout.txt" 2>"$OUT_DIR/raw/${name}.stderr.txt"
-    status=$?
     printf '%s\t%s\n' "$name" "$status" >> "$OUT_DIR/exit-codes.tsv"
 }
 
@@ -61,6 +64,8 @@ EOF
 
 (
     cd "$OUT_DIR"
-    find . -type f ! -name artifacts.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts.sha256
+    find . -type f ! -name artifacts.sha256 -print0 \
+        | sort -z \
+        | xargs -0 sha256sum > artifacts.sha256
 )
 printf 'Baseline written to %s\n' "$OUT_DIR"
