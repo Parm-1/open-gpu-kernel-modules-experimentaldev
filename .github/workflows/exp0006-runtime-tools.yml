@@ -9,16 +9,22 @@ on:
       - 'scripts/exp0006-preflight.py'
       - 'scripts/build-exp0006.py'
       - 'scripts/render-exp0006-rollback.py'
+      - 'scripts/verify-exp0006-loaded.py'
+      - 'scripts/collect-native-baseline.sh'
       - 'docs/runtime/EXP-0006-native-protocol.md'
       - 'docs/runtime/EXP-0006-approval-template.md'
+      - 'docs/recovery/native-test-recovery-checklist.md'
       - '.github/workflows/exp0006-runtime-tools.yml'
   pull_request:
     paths:
       - 'scripts/exp0006-preflight.py'
       - 'scripts/build-exp0006.py'
       - 'scripts/render-exp0006-rollback.py'
+      - 'scripts/verify-exp0006-loaded.py'
+      - 'scripts/collect-native-baseline.sh'
       - 'docs/runtime/EXP-0006-native-protocol.md'
       - 'docs/runtime/EXP-0006-approval-template.md'
+      - 'docs/recovery/native-test-recovery-checklist.md'
       - '.github/workflows/exp0006-runtime-tools.yml'
   workflow_dispatch:
 
@@ -30,17 +36,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile Python tools
+      - name: Compile Python tools and check shell syntax
         run: |
           python3 -m py_compile \
             scripts/exp0006-preflight.py \
             scripts/build-exp0006.py \
-            scripts/render-exp0006-rollback.py
+            scripts/render-exp0006-rollback.py \
+            scripts/verify-exp0006-loaded.py
+          bash -n scripts/collect-native-baseline.sh
       - name: Run deterministic self-tests
         run: |
           python3 scripts/exp0006-preflight.py --self-test
           python3 scripts/build-exp0006.py --self-test
           python3 scripts/render-exp0006-rollback.py --self-test
+          python3 scripts/verify-exp0006-loaded.py --self-test
       - name: Verify preflight command confinement
         run: |
           python3 - <<'PY'
@@ -90,3 +99,10 @@ jobs:
             docs/runtime/EXP-0006-approval-template.md
           grep -q 'unload_nvidia_stack' \
             docs/runtime/EXP-0006-native-protocol.md
+          grep -q 'verify-exp0006-loaded.py' \
+            docs/runtime/EXP-0006-native-protocol.md
+          if grep -qE 'drm_info|uname -a|edid-hashes|nvidia-bug-report' \
+              scripts/collect-native-baseline.sh; then
+            echo 'baseline collector reintroduced broad or identifying collection' >&2
+            exit 1
+          fi
