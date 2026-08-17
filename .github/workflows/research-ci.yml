@@ -1,0 +1,48 @@
+name: research-ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-and-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate experiment metadata and duplicate KAPI headers
+        run: python3 scripts/check-research-metadata.py
+      - name: Check shell syntax
+        run: |
+          bash -n scripts/verify-source-transition.sh
+          bash -n scripts/collect-native-baseline.sh
+      - name: Reproduce NVIDIA source transition
+        run: scripts/verify-source-transition.sh artifacts/source-transition
+      - name: Upload source-transition evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-transition-evidence
+          path: artifacts/source-transition
+
+  build-vulkan-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vulkan development headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev cmake ninja-build g++
+      - name: Configure and build
+        run: |
+          cmake -S probes/vk-protected-probe -B build/vk-protected -G Ninja
+          cmake --build build/vk-protected
+      - name: Validate output schema path
+        run: build/vk-protected/vk-protected-probe --schema | python3 -m json.tool
