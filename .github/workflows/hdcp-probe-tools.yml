@@ -1,0 +1,30 @@
+name: hdcp-probe-tools
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'scripts/decode-hdcp-probe.py'
+      - 'docs/implementation/hdcp-probe-output.md'
+      - '.github/workflows/hdcp-probe-tools.yml'
+  pull_request:
+    paths:
+      - 'scripts/decode-hdcp-probe.py'
+      - 'docs/implementation/hdcp-probe-output.md'
+      - '.github/workflows/hdcp-probe-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax and decoder self-test
+        run: |
+          python3 -m py_compile scripts/decode-hdcp-probe.py
+          python3 scripts/decode-hdcp-probe.py --self-test

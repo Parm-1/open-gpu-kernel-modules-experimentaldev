@@ -1568,6 +1568,41 @@ done:
     return status;
 }
 
+static NvBool QueryHdcpState(
+    struct NvKmsKapiDevice *device,
+    NvKmsKapiDisplay display,
+    struct NvKmsKapiHdcpState *state)
+{
+    struct NvKmsQueryDpyHdcpStateParams params = { };
+    NvBool status;
+
+    if ((device == NULL) || (state == NULL)) {
+        return NV_FALSE;
+    }
+
+    nvkms_memset(state, 0, sizeof(*state));
+    params.request.deviceHandle = device->hKmsDevice;
+    params.request.dispHandle = device->hKmsDisp;
+    params.request.dpyId = nvNvU32ToDpyId(display);
+
+    status = nvkms_ioctl_from_kapi(device->pKmsOpen,
+                                   NVKMS_IOCTL_QUERY_DPY_HDCP_STATE,
+                                   &params, sizeof(params));
+    if (!status) {
+        nvKmsKapiLogDeviceDebug(device,
+            "Failed to transport read-only HDCP state query for display 0x%08x",
+            display);
+        return NV_FALSE;
+    }
+
+    state->queryResult = params.reply.queryResult;
+    state->rmStatus = params.reply.rmStatus;
+    state->flags = params.reply.flags;
+    state->valid = params.reply.valid;
+
+    return NV_TRUE;
+}
+
 static void FreeMemory
 (
     struct NvKmsKapiDevice *device, struct NvKmsKapiMemory *memory
@@ -4157,6 +4192,7 @@ NvBool nvKmsKapiGetFunctionsTableInternal
 
     funcsTable->getStaticDisplayInfo   = GetStaticDisplayInfo;
     funcsTable->getDynamicDisplayInfo  = GetDynamicDisplayInfo;
+    funcsTable->queryHdcpState          = QueryHdcpState;
 
     funcsTable->allocateMemory       = AllocateMemory;
     funcsTable->importMemory         = ImportMemory;

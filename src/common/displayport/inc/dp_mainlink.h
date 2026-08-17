@@ -117,6 +117,17 @@ namespace DisplayPort
         unsigned char       updMask;
     }RmDfpCache;
 
+    /*
+     * Raw, read-only result from NV0073_CTRL_CMD_SPECIFIC_GET_HDCP_STATE.
+     * valid is set only when RM completed the query successfully.
+     */
+    typedef struct
+    {
+        NvU32 rmStatus;
+        NvU32 flags;
+        NvBool valid;
+    } HDCPRawState;
+
     typedef enum
     {
         NORMAL_LINK_TRAINING,  // full LT
@@ -240,6 +251,7 @@ namespace DisplayPort
         virtual void forwardPendingKsvListReady(NvBool bKsvListReady) = 0;
         virtual void triggerACT() = 0;
         virtual void configureHDCPGetHDCPState(HDCPState &hdcpState) = 0;
+        virtual bool queryHDCPRawState(HDCPRawState &rawState) = 0;
 
         virtual NvU32 headToStream(NvU32 head, bool bSidebandMessageSupported,
             DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID streamIdentifier = DP_SINGLE_HEAD_MULTI_STREAM_PIPELINE_ID_PRIMARY) = 0;

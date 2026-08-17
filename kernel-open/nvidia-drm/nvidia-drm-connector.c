@@ -105,6 +105,25 @@ static void nv_drm_connector_destroy(struct drm_connector *connector)
     nv_drm_free(nv_connector);
 }
 
+static void nv_drm_report_hdcp_probe(
+    struct nv_drm_device *nv_dev,
+    NvKmsKapiDisplay display)
+{
+    struct NvKmsKapiHdcpState state = {0};
+    NvBool transport = NV_FALSE;
+
+    if (nvKms->queryHdcpState != NULL) {
+        transport = nvKms->queryHdcpState(
+            nv_dev->pDevice, display, &state);
+    }
+
+    NV_DRM_DEV_LOG_INFO(
+        nv_dev,
+        "HDCP_PROBE display=0x%08x transport=%u query_result=%u rm_status=0x%08x flags=0x%08x valid=%u",
+        display, transport ? 1U : 0U, state.queryResult,
+        state.rmStatus, state.flags, state.valid ? 1U : 0U);
+}
+
 static bool
 __nv_drm_detect_encoder(struct NvKmsKapiDynamicDisplayParams *pDetectParams,
                         struct drm_connector *connector,
@@ -167,6 +186,10 @@ __nv_drm_detect_encoder(struct NvKmsKapiDynamicDisplayParams *pDetectParams,
             nv_dev,
             "Failed to detect display state");
         return false;
+    }
+
+    if (nv_drm_hdcp_probe_module_param && pDetectParams->connected) {
+        nv_drm_report_hdcp_probe(nv_dev, pDetectParams->handle);
     }
 
     dev->mode_config.max_width  = pDetectParams->maxWidthInPixels;

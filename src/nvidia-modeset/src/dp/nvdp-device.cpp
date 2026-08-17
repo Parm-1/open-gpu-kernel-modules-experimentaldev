@@ -31,6 +31,56 @@
 
 #include "nvctassert.h"
 
+NvDPHDCPQueryResult nvDPQueryHDCPRawState(
+    const NVDpyEvoRec *pDpyEvo,
+    NvDPHDCPRawState *pState)
+{
+    NVDPLibConnectorPtr pDpLibConnector;
+    DisplayPort::HDCPRawState rawState;
+
+    if (pState == NULL) {
+        return NV_DP_HDCP_QUERY_RESULT_INVALID_ARGUMENT;
+    }
+
+    nvkms_memset(pState, 0, sizeof(*pState));
+
+    if (pDpyEvo == NULL) {
+        return NV_DP_HDCP_QUERY_RESULT_INVALID_ARGUMENT;
+    }
+
+    if (!nvDpyUsesDPLib(pDpyEvo) || nvDpyEvoIsDPMST(pDpyEvo)) {
+        return NV_DP_HDCP_QUERY_RESULT_UNSUPPORTED_ROUTE;
+    }
+
+    if (pDpyEvo->dp.pDpLibDevice == NULL) {
+        return NV_DP_HDCP_QUERY_RESULT_NO_DEVICE;
+    }
+
+    if (!pDpyEvo->dp.pDpLibDevice->isPlugged) {
+        return NV_DP_HDCP_QUERY_RESULT_NOT_PLUGGED;
+    }
+
+    if (pDpyEvo->pConnectorEvo == NULL) {
+        return NV_DP_HDCP_QUERY_RESULT_NO_MAIN_LINK;
+    }
+
+    pDpLibConnector = pDpyEvo->pConnectorEvo->pDpLibConnector;
+    if ((pDpLibConnector == NULL) || (pDpLibConnector->mainLink == NULL)) {
+        return NV_DP_HDCP_QUERY_RESULT_NO_MAIN_LINK;
+    }
+
+    if (!pDpLibConnector->mainLink->queryHDCPRawState(rawState)) {
+        pState->rmStatus = rawState.rmStatus;
+        return NV_DP_HDCP_QUERY_RESULT_RM_FAILURE;
+    }
+
+    pState->rmStatus = rawState.rmStatus;
+    pState->flags = rawState.flags;
+    pState->valid = rawState.valid;
+
+    return NV_DP_HDCP_QUERY_RESULT_SUCCESS;
+}
+
 void nvDPDeviceSetPowerState(NVDpyEvoPtr pDpyEvo, NvBool on)
 {
     NVDispEvoPtr pDispEvo = pDpyEvo->pDispEvo;

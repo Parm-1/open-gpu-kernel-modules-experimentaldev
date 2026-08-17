@@ -479,6 +479,33 @@ void EvoMainLink::configureHDCPValidateLink(HDCPValidateData &hdcpValidateData, 
     hdcpValidateData.mP = paramsHdcpCtrl.mP;
 }
 
+bool EvoMainLink::queryHDCPRawState(HDCPRawState &rawState)
+{
+    NV0073_CTRL_SPECIFIC_GET_HDCP_STATE_PARAMS params = {0};
+
+    dpMemZero(&rawState, sizeof(rawState));
+
+    params.subDeviceInstance = this->subdeviceIndex;
+    params.displayId = this->displayId;
+
+    rawState.rmStatus = provider->rmControl0073(
+        NV0073_CTRL_CMD_SPECIFIC_GET_HDCP_STATE,
+        &params,
+        sizeof(params));
+
+    if (rawState.rmStatus != NVOS_STATUS_SUCCESS)
+    {
+        DP_PRINTF(DP_ERROR, "queryHDCPRawState(): Get HDCP state failed (0x%x)!",
+                  rawState.rmStatus);
+        return false;
+    }
+
+    rawState.flags = params.flags;
+    rawState.valid = NV_TRUE;
+
+    return true;
+}
+
 void EvoMainLink::configureHDCPGetHDCPState(HDCPState &hdcpState)
 {
     NV0073_CTRL_SPECIFIC_GET_HDCP_STATE_PARAMS params = {0};

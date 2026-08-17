@@ -274,6 +274,7 @@ enum NvKmsIoctlCommand {
     NVKMS_IOCTL_FRAMEBUFFER_CONSOLE_DISABLED,
     NVKMS_IOCTL_REGISTER_VBLANK_INTR_CALLBACK,
     NVKMS_IOCTL_UNREGISTER_VBLANK_INTR_CALLBACK,
+    NVKMS_IOCTL_QUERY_DPY_HDCP_STATE,
 };
 
 
@@ -1583,6 +1584,25 @@ struct NvKmsQueryDpyDynamicDataReply {
 struct NvKmsQueryDpyDynamicDataParams {
     struct NvKmsQueryDpyDynamicDataRequest request; /*! in */
     struct NvKmsQueryDpyDynamicDataReply reply;     /*! out */
+};
+
+/* Read-only HDCP state query. Detailed failures are returned in the reply. */
+struct NvKmsQueryDpyHdcpStateRequest {
+    NvKmsDeviceHandle deviceHandle;
+    NvKmsDispHandle dispHandle;
+    NVDpyId dpyId;
+};
+
+struct NvKmsQueryDpyHdcpStateReply {
+    NvU32 queryResult;
+    NvU32 rmStatus;
+    NvU32 flags;
+    NvBool valid;
+};
+
+struct NvKmsQueryDpyHdcpStateParams {
+    struct NvKmsQueryDpyHdcpStateRequest request; /*! in */
+    struct NvKmsQueryDpyHdcpStateReply reply;     /*! out */
 };
 
 /*! Values for the NV_KMS_DPY_ATTRIBUTE_REQUESTED_COLOR_FORMAT attribute. */
