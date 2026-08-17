@@ -28,7 +28,7 @@ EXPECTED_GPU_SUBSTRING = "RTX 2060"
 REQUIRED_MODULES = ("nvidia", "nvidia_modeset", "nvidia_drm")
 OPTIONAL_MODULES = ("nvidia_uvm", "nvidia_peermem")
 STATUS_ORDER = {"PASS": 0, "WARN": 1, "BLOCK": 2}
-MODINFO_FIELDS = {"version", "vermagic", "signer"}
+MODINFO_FIELDS = {"version", "vermagic", "signer", "srcversion"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -244,35 +244,37 @@ def check_tools() -> Check:
         "nvidia-smi",
         "sha256sum",
         "python3",
-        "drm_info",
         "modetest",
-        "nvidia-bug-report.sh",
+        "lspci",
+        "lsmod",
+        "journalctl",
+        "systemctl",
     )
-    optional = ("mokutil", "systemctl")
-    required_paths = {name: shutil.which(name) for name in required}
-    optional_paths = {name: shutil.which(name) for name in optional}
-    missing = [name for name, value in required_paths.items() if value is None]
+    optional = ("mokutil", "vulkaninfo")
+    required_available = {name: shutil.which(name) is not None for name in required}
+    optional_available = {name: shutil.which(name) is not None for name in optional}
+    missing = [name for name, available in required_available.items() if not available]
     if missing:
         return Check(
             "tools",
             "BLOCK",
             "Required build or evidence tools are missing.",
-            {"required": required_paths, "optional": optional_paths},
+            {"required_available": required_available, "optional_available": optional_available},
             "Install: " + ", ".join(missing),
         )
-    if any(value is None for value in optional_paths.values()):
+    if not optional_available["mokutil"]:
         return Check(
             "tools",
             "WARN",
-            "Core tools are present; Secure Boot or service checks need manual verification.",
-            {"required": required_paths, "optional": optional_paths},
-            "Install mokutil/systemd tooling or document equivalent checks before approval.",
+            "Core tools are present; Secure Boot state needs an equivalent manual check.",
+            {"required_available": required_available, "optional_available": optional_available},
+            "Install mokutil or document firmware Secure Boot state manually before approval.",
         )
     return Check(
         "tools",
         "PASS",
         "Required build and evidence tools are available.",
-        {"required": required_paths, "optional": optional_paths},
+        {"required_available": required_available, "optional_available": optional_available},
     )
 
 
@@ -282,6 +284,7 @@ def module_metadata(module: str) -> tuple[dict[str, Any], list[CommandResult]]:
         run_command(f"{module}-version", ["modinfo", "-F", "version", module]),
         run_command(f"{module}-vermagic", ["modinfo", "-F", "vermagic", module]),
         run_command(f"{module}-signer", ["modinfo", "-F", "signer", module]),
+        run_command(f"{module}-srcversion", ["modinfo", "-F", "srcversion", module]),
     ]
     filename = results[0].stdout.strip() if results[0].returncode == 0 else None
     path = Path(filename) if filename and filename != "(builtin)" else None
@@ -293,6 +296,7 @@ def module_metadata(module: str) -> tuple[dict[str, Any], list[CommandResult]]:
             digest = sha256_file(path)
         except OSError as exc:
             hash_error = str(exc)
+    loaded_srcversion = text_or_none(Path("/sys/module") / module / "srcversion")
     return {
         "name": module,
         "filename": filename,
@@ -302,6 +306,8 @@ def module_metadata(module: str) -> tuple[dict[str, Any], list[CommandResult]]:
         "version": results[1].stdout.strip() if results[1].returncode == 0 else None,
         "vermagic": results[2].stdout.strip() if results[2].returncode == 0 else None,
         "signer": results[3].stdout.strip() if results[3].returncode == 0 else None,
+        "srcversion": results[4].stdout.strip() if results[4].returncode == 0 else None,
+        "loaded_srcversion": loaded_srcversion,
     }, results
 
 
@@ -332,6 +338,7 @@ def check_driver_stack(
     fbdev = text_or_none(Path("/sys/module/nvidia_drm/parameters/fbdev"))
 
     problems: list[str] = []
+    identity_warnings: list[str] = []
     for record in module_records:
         name = str(record["name"])
         required = name in REQUIRED_MODULES
@@ -346,6 +353,14 @@ def check_driver_stack(
             problems.append(f"{name} vermagic does not match {kernel_release}")
         if required and not record["loaded"]:
             problems.append(f"required module is not loaded: {name}")
+        if record["loaded"]:
+            on_disk_srcversion = record.get("srcversion")
+            loaded_srcversion = record.get("loaded_srcversion")
+            if on_disk_srcversion and loaded_srcversion:
+                if on_disk_srcversion != loaded_srcversion:
+                    problems.append(f"{name} loaded srcversion differs from the on-disk module")
+            else:
+                identity_warnings.append(f"{name} loaded/on-disk srcversion comparison is unavailable")
 
     if userspace_version != expected_version:
         problems.append(f"userspace driver is {userspace_version or 'unknown'}, expected {expected_version}")
@@ -358,7 +373,7 @@ def check_driver_stack(
     if modeset not in {"Y", "1"}:
         problems.append(f"nvidia_drm modeset is {modeset or 'unknown'}, expected enabled")
 
-    status = "PASS" if not problems else "BLOCK"
+    status = "BLOCK" if problems else "WARN" if identity_warnings else "PASS"
     snapshot = {
         "schema_version": 1,
         "generated_at": utc_now(),
@@ -369,11 +384,20 @@ def check_driver_stack(
         "modules": module_records,
         "nvidia_drm_parameters": {"modeset": modeset, "fbdev": fbdev},
     }
+    if status == "PASS":
+        summary = "Installed and loaded NVIDIA stack matches the pinned target."
+        resolution = None
+    elif status == "WARN":
+        summary = "NVIDIA version and topology checks pass, but loaded/on-disk identity needs manual confirmation."
+        resolution = "Resolve or document every srcversion comparison warning before approval."
+    else:
+        summary = "The NVIDIA stack does not match the pinned target."
+        resolution = "Boot one coherent NVIDIA 610.57.04 RTX 2060 stack with nvidia-drm KMS enabled before building or loading the experiment."
     return (
         Check(
             "nvidia-stack",
             status,
-            "Installed and loaded NVIDIA stack matches the pinned target." if status == "PASS" else "The NVIDIA stack does not match the pinned target.",
+            summary,
             {
                 "expected_version": expected_version,
                 "expected_gpu_substring": expected_gpu_substring,
@@ -382,8 +406,9 @@ def check_driver_stack(
                 "nouveau_loaded": "nouveau" in loaded,
                 "modeset": modeset,
                 "problems": problems,
+                "identity_warnings": identity_warnings,
             },
-            None if status == "PASS" else "Boot one coherent NVIDIA 610.57.04 RTX 2060 stack with nvidia-drm KMS enabled before building or loading the experiment.",
+            resolution,
         ),
         snapshot,
         commands,
@@ -578,6 +603,7 @@ def self_test() -> None:
     assert not vermagic_matches("6.8.0-136-generic SMP", "6.8.0-137-generic")
     validate_read_only_command(["git", "rev-parse", "HEAD"])
     validate_read_only_command(["modinfo", "-F", "version", "nvidia"])
+    validate_read_only_command(["modinfo", "-F", "srcversion", "nvidia_drm"])
     for forbidden in (
         ["modprobe", "-r", "nvidia"],
         ["sudo", "modprobe", "-r", "nvidia"],
