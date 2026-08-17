@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+EXPECTED_VERSION = "610.57.04"
 RUNTIME_MODULES = {
     "nvidia.ko": "nvidia",
     "nvidia-modeset.ko": "nvidia_modeset",
@@ -41,6 +42,24 @@ def text_or_none(path: Path) -> str | None:
 
 def valid_sha256(value: str) -> bool:
     return re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def vermagic_matches(vermagic: object, kernel_release: str) -> bool:
+    return isinstance(vermagic, str) and bool(vermagic) and vermagic.split(maxsplit=1)[0] == kernel_release
+
+
+def safe_artifact_path(build_dir: Path, relative_path: object) -> Path | None:
+    if not isinstance(relative_path, str) or not relative_path:
+        return None
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate = (build_dir / relative).resolve()
+    try:
+        candidate.relative_to(build_dir.resolve())
+    except ValueError:
+        return None
+    return candidate
 
 
 def add_check(
@@ -83,6 +102,13 @@ def verify(
     manifest = json.loads(manifest_path.read_text())
     add_check(
         checks,
+        "source-version",
+        manifest.get("source_version") == EXPECTED_VERSION,
+        EXPECTED_VERSION,
+        manifest.get("source_version"),
+    )
+    add_check(
+        checks,
         "kernel-release",
         manifest.get("kernel_release") == kernel_release,
         manifest.get("kernel_release"),
@@ -100,6 +126,15 @@ def verify(
         and cleanup.get("clean_tree_verified") is True
     )
     add_check(checks, "build-cleanup", cleanup_ok, True, cleanup_ok)
+    safety = manifest.get("safety")
+    safety_ok = (
+        isinstance(safety, dict)
+        and safety.get("installed") is False
+        and safety.get("loaded") is False
+        and safety.get("boot_configuration_changed") is False
+        and safety.get("rebooted") is False
+    )
+    add_check(checks, "build-safety-record", safety_ok, True, safety_ok)
 
     module_records = {
         record.get("name"): record
@@ -112,19 +147,45 @@ def verify(
         if record is None:
             continue
 
+        expected_relative = f"modules/{file_name}"
         relative_path = record.get("relative_path")
-        artifact_path = build_dir / str(relative_path)
-        artifact_exists = artifact_path.is_file()
-        add_check(checks, f"{sys_name}-artifact-exists", artifact_exists, True, artifact_exists)
-        if artifact_exists:
-            artifact_hash = sha256_file(artifact_path)
-            add_check(
-                checks,
-                f"{sys_name}-artifact-sha256",
-                artifact_hash == record.get("sha256"),
-                record.get("sha256"),
-                artifact_hash,
-            )
+        add_check(
+            checks,
+            f"{sys_name}-relative-path",
+            relative_path == expected_relative,
+            expected_relative,
+            relative_path,
+        )
+        artifact_path = safe_artifact_path(build_dir, relative_path)
+        safe_path = artifact_path is not None
+        add_check(checks, f"{sys_name}-safe-artifact-path", safe_path, True, safe_path)
+        if artifact_path is not None:
+            artifact_exists = artifact_path.is_file()
+            add_check(checks, f"{sys_name}-artifact-exists", artifact_exists, True, artifact_exists)
+            if artifact_exists:
+                artifact_hash = sha256_file(artifact_path)
+                add_check(
+                    checks,
+                    f"{sys_name}-artifact-sha256",
+                    artifact_hash == record.get("sha256"),
+                    record.get("sha256"),
+                    artifact_hash,
+                )
+
+        add_check(
+            checks,
+            f"{sys_name}-manifest-version",
+            record.get("version") == EXPECTED_VERSION,
+            EXPECTED_VERSION,
+            record.get("version"),
+        )
+        add_check(
+            checks,
+            f"{sys_name}-manifest-vermagic",
+            vermagic_matches(record.get("vermagic"), kernel_release),
+            kernel_release,
+            record.get("vermagic"),
+        )
 
         sys_dir = sys_module_root / sys_name
         loaded = sys_dir.is_dir()
@@ -206,25 +267,33 @@ def self_test() -> None:
                     "name": file_name,
                     "relative_path": f"modules/{file_name}",
                     "sha256": sha256_file(artifact),
-                    "version": "610.57.04",
+                    "version": EXPECTED_VERSION,
+                    "vermagic": "6.8.0-test SMP preempt mod_unload",
                     "srcversion": srcversion,
                 }
             )
             module_dir = sys_root / sys_name
             (module_dir / "parameters").mkdir(parents=True)
-            (module_dir / "version").write_text("610.57.04\n")
+            (module_dir / "version").write_text(EXPECTED_VERSION + "\n")
             (module_dir / "srcversion").write_text(srcversion + "\n")
 
         (sys_root / "nvidia_drm" / "parameters" / "modeset").write_text("Y\n")
         (sys_root / "nvidia_drm" / "parameters" / "hdcp_probe").write_text("Y\n")
         manifest = {
             "source": {"commit": "a" * 40, "dirty": False},
+            "source_version": EXPECTED_VERSION,
             "kernel_release": "6.8.0-test",
             "cleanup": {
                 "preclean_returncode": 0,
                 "build_returncode": 0,
                 "postclean_returncode": 0,
                 "clean_tree_verified": True,
+            },
+            "safety": {
+                "installed": False,
+                "loaded": False,
+                "boot_configuration_changed": False,
+                "rebooted": False,
             },
             "modules": records,
         }
@@ -237,6 +306,15 @@ def self_test() -> None:
         (sys_root / "nvidia_drm" / "parameters" / "hdcp_probe").write_text("N\n")
         failed = verify(manifest_path, manifest_hash, "Y", sys_root, "6.8.0-test")
         assert failed["passed"] is False
+
+        bad_path = json.loads(json.dumps(manifest))
+        bad_path["modules"][0]["relative_path"] = "../../outside.ko"
+        bad_manifest_path = build_dir / "bad-manifest.json"
+        bad_manifest_path.write_text(json.dumps(bad_path))
+        bad_hash = sha256_file(bad_manifest_path)
+        bad_result = verify(bad_manifest_path, bad_hash, "N", sys_root, "6.8.0-test")
+        assert bad_result["passed"] is False
+        assert safe_artifact_path(build_dir, "../../outside.ko") is None
         assert valid_sha256(manifest_hash)
     print("verify-exp0006-loaded self-test passed")
 
