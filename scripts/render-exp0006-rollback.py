@@ -30,6 +30,14 @@ def valid_sha256(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def module_parameter_argument(value: object) -> str | None:
+    if value in {"Y", "1", 1, True}:
+        return "1"
+    if value in {"N", "0", 0, False}:
+        return "0"
+    return None
+
+
 def validate_module_record(
     name: str,
     record: dict[str, Any],
@@ -40,13 +48,21 @@ def validate_module_record(
     errors: list[str] = []
     if require_loaded and record.get("loaded") is not True:
         errors.append(f"{name}: was not loaded in the known-good snapshot")
-    for field in ("filename", "version", "vermagic"):
+
+    filename = record.get("filename")
+    if not isinstance(filename, str) or not filename:
+        errors.append(f"{name}: missing filename")
+    elif not Path(filename).is_absolute():
+        errors.append(f"{name}: filename is not absolute")
+
+    for field in ("version", "vermagic"):
         if not record.get(field):
             errors.append(f"{name}: missing {field}")
     if not valid_sha256(record.get("sha256")):
         errors.append(f"{name}: invalid or missing sha256")
     if record.get("version") != expected_version:
         errors.append(f"{name}: version does not match expected_version")
+
     on_disk_srcversion = record.get("srcversion")
     loaded_srcversion = record.get("loaded_srcversion")
     if on_disk_srcversion and loaded_srcversion and on_disk_srcversion != loaded_srcversion:
@@ -60,8 +76,19 @@ def validate_snapshot(snapshot: dict[str, Any]) -> list[str]:
     if not isinstance(expected, str) or not expected:
         errors.append("missing expected_version")
         expected = ""
-    if not snapshot.get("kernel_release"):
+    kernel_release = snapshot.get("kernel_release")
+    if not isinstance(kernel_release, str) or not kernel_release:
         errors.append("missing kernel_release")
+
+    parameters = snapshot.get("nvidia_drm_parameters")
+    if not isinstance(parameters, dict):
+        errors.append("missing nvidia_drm_parameters")
+    else:
+        if module_parameter_argument(parameters.get("modeset")) != "1":
+            errors.append("nvidia_drm modeset was not enabled in the known-good snapshot")
+        fbdev = parameters.get("fbdev")
+        if fbdev is not None and module_parameter_argument(fbdev) is None:
+            errors.append("nvidia_drm fbdev has an unsupported value")
 
     records = module_by_name(snapshot)
     for name in REQUIRED_MODULES:
@@ -70,9 +97,7 @@ def validate_snapshot(snapshot: dict[str, Any]) -> list[str]:
             errors.append(f"missing module record: {name}")
             continue
         errors.extend(
-            validate_module_record(
-                name, record, expected, require_loaded=True
-            )
+            validate_module_record(name, record, expected, require_loaded=True)
         )
 
     for name in OPTIONAL_MODULES:
@@ -80,23 +105,21 @@ def validate_snapshot(snapshot: dict[str, Any]) -> list[str]:
         if not record or record.get("loaded") is not True:
             continue
         errors.extend(
-            validate_module_record(
-                name, record, expected, require_loaded=True
-            )
+            validate_module_record(name, record, expected, require_loaded=True)
         )
     return errors
 
 
-def shell_test_module(name: str, record: dict[str, Any]) -> list[str]:
+def shell_verify_on_disk(name: str, record: dict[str, Any]) -> list[str]:
     quoted_name = shlex.quote(name)
     expected_path = shlex.quote(str(record["filename"]))
     expected_hash = shlex.quote(str(record["sha256"]))
     expected_version = shlex.quote(str(record["version"]))
     expected_vermagic = shlex.quote(str(record["vermagic"]))
     lines = [
-        f"test -d /sys/module/{quoted_name}",
+        f"test -f {expected_path}",
         f"test \"$(modinfo -n {quoted_name})\" = {expected_path}",
-        f"test \"$(sha256sum \"$(modinfo -n {quoted_name})\" | awk '{{print $1}}')\" = {expected_hash}",
+        f"test \"$(sha256sum {expected_path} | awk '{{print $1}}')\" = {expected_hash}",
         f"test \"$(modinfo -F version {quoted_name})\" = {expected_version}",
         f"test \"$(modinfo -F vermagic {quoted_name})\" = {expected_vermagic}",
     ]
@@ -104,11 +127,28 @@ def shell_test_module(name: str, record: dict[str, Any]) -> list[str]:
         lines.append(
             f"test \"$(modinfo -F srcversion {quoted_name})\" = {shlex.quote(str(record['srcversion']))}"
         )
+    return lines
+
+
+def shell_test_loaded_module(name: str, record: dict[str, Any]) -> list[str]:
+    quoted_name = shlex.quote(name)
+    lines = [f"test -d /sys/module/{quoted_name}"]
+    lines.extend(shell_verify_on_disk(name, record))
     if record.get("loaded_srcversion"):
         lines.append(
             f"test \"$(cat /sys/module/{quoted_name}/srcversion)\" = {shlex.quote(str(record['loaded_srcversion']))}"
         )
     return lines
+
+
+def shell_modprobe_command(name: str, parameters: dict[str, Any]) -> str:
+    argv = ["sudo", "modprobe", name]
+    if name == "nvidia_drm":
+        for parameter in ("modeset", "fbdev"):
+            value = module_parameter_argument(parameters.get(parameter))
+            if value is not None:
+                argv.append(f"{parameter}={value}")
+    return shlex.join(argv)
 
 
 def render(snapshot: dict[str, Any]) -> str:
@@ -126,9 +166,7 @@ def render(snapshot: dict[str, Any]) -> str:
         *[name for name in OPTIONAL_MODULES if name in loaded_modules],
         "nvidia_drm",
     ]
-    parameters = snapshot.get("nvidia_drm_parameters")
-    if not isinstance(parameters, dict):
-        parameters = {}
+    parameters = snapshot["nvidia_drm_parameters"]
 
     lines = [
         "# EXP-0006 machine-specific rollback plan",
@@ -165,11 +203,21 @@ def render(snapshot: dict[str, Any]) -> str:
             "",
             "## Intended recovery sequence",
             "",
-            "Run only from working SSH or local TTY after the graphical session is stopped. Never use force-removal.",
+            "Run only from working SSH or local TTY. Verify the resolver and known-good files before stopping the graphical session. Never use force-removal.",
             "",
             "```bash",
             "set -euo pipefail",
             f"test \"$(uname -r)\" = {shlex.quote(kernel_release)}",
+            "",
+            "# Fail before changing state if modprobe no longer resolves to the approved known-good files.",
+        ]
+    )
+    for name in loaded_modules:
+        lines.extend(shell_verify_on_disk(name, records[name]))
+
+    lines.extend(
+        [
+            "",
             "sudo systemctl isolate multi-user.target",
             "",
             "unload_nvidia_stack() {",
@@ -191,16 +239,16 @@ def render(snapshot: dict[str, Any]) -> str:
         ]
     )
     for name in load_order:
-        lines.append("sudo modprobe " + shlex.quote(name))
+        lines.append(shell_modprobe_command(name, parameters))
 
     lines.extend(
         [
             "",
-            "# Verify the restored known-good files, hashes, versions, vermagic, srcversion, and loaded state.",
+            "# Verify the restored known-good files, hashes, versions, vermagic, srcversion, parameters, and loaded state.",
         ]
     )
     for name in loaded_modules:
-        lines.extend(shell_test_module(name, records[name]))
+        lines.extend(shell_test_loaded_module(name, records[name]))
     lines.append(
         f"test \"$(cat /sys/module/nvidia/version)\" = {shlex.quote(expected)}"
     )
@@ -215,7 +263,7 @@ def render(snapshot: dict[str, Any]) -> str:
             "sudo systemctl isolate graphical.target",
             "```",
             "",
-            "If an unload, load, path, hash, version, vermagic, srcversion, parameter, or graphical-target check fails, remain in text mode and use the independently tested known-good boot entry. Do not force a module operation and do not continue the experiment.",
+            "If a pre-check, unload, load, path, hash, version, vermagic, srcversion, parameter, or graphical-target check fails, remain in text mode and use the independently tested known-good boot entry. Do not force a module operation and do not continue the experiment.",
             "",
             "## Pre-execution manual checks",
             "",
@@ -247,13 +295,18 @@ def self_test() -> None:
     text = render(snapshot)
     assert "unload_nvidia_stack" in text
     assert "sudo modprobe nvidia_uvm" in text
-    assert "sha256sum" in text
+    assert "sudo modprobe nvidia_drm modeset=1 fbdev=0" in text
+    assert text.index("modinfo -n nvidia") < text.index("systemctl isolate multi-user.target")
+    assert "sha256sum /lib/nvidia.ko" in text
     assert "modinfo -F srcversion" in text
     assert "/parameters/modeset" in text
     assert validate_snapshot(snapshot) == []
     broken = json.loads(json.dumps(snapshot))
     broken["modules"][0]["loaded"] = False
     assert validate_snapshot(broken)
+    broken_path = json.loads(json.dumps(snapshot))
+    broken_path["modules"][0]["filename"] = "relative/nvidia.ko"
+    assert validate_snapshot(broken_path)
     broken_srcversion = json.loads(json.dumps(snapshot))
     broken_srcversion["modules"][0]["loaded_srcversion"] = "OTHER"
     assert validate_snapshot(broken_srcversion)
