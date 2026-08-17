@@ -14,6 +14,8 @@ Labels: `PROVEN_SOURCE`, `PROVEN_BUILD`, `PROVEN_RUNTIME`, `INFERRED`, `UNKNOWN`
 | EV-0008 | PROVEN_BUILD | Dedicated NVKMS ioctl/KAPI path compiles and preserves detailed errors | commit `6918273d...` |
 | EV-0009 | PROVEN_BUILD | Default-off `nvidia-drm` structured diagnostic compiles | commit `eb6cb2f4...` |
 | EV-0010 | PROVEN_BUILD | Experimental ioctl and KAPI additions are append-only and rebuild cleanly | commit `3759ee6d...` |
-| EV-0011 | UNKNOWN | RTX 2060 Linux RM/GSP returns meaningful state | EXP-0006 pending |
-| EV-0012 | UNKNOWN | Target route authenticates HDCP 2.2 Type 1 | later Gate 2 experiment |
-| EV-0013 | UNKNOWN | NVIDIA Vulkan Linux advertises protected memory/video/presentation | EXP-0004 pending |
+| EV-0011 | PROVEN_BUILD | Final PR head passed all six checks, including complete module compilation | commit `de4bc76f...`, Actions run `32024540017` |
+| EV-0012 | PROVEN_SOURCE | Read-only implementation is integrated into `main` | merge `e9507b77...` |
+| EV-0013 | UNKNOWN | RTX 2060 Linux RM/GSP returns meaningful state | EXP-0006 pending |
+| EV-0014 | UNKNOWN | Target route authenticates HDCP 2.2 Type 1 | later Gate 2 experiment |
+| EV-0015 | UNKNOWN | NVIDIA Vulkan Linux advertises protected memory/video/presentation | EXP-0004 pending |

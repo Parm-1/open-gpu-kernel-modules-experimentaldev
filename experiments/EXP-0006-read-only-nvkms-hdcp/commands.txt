@@ -1,6 +1,16 @@
-# Runtime commands are gated by recovery preparation and explicit approval.
+# Preparation commands are read-only/build-only. Runtime commands remain gated.
 # See docs/runtime/EXP-0006-native-protocol.md.
 
-journalctl -k -b --no-pager | grep 'HDCP_PROBE' > hdcp-probe.log
+preflight_dir="artifacts/EXP-0006-preflight-$(date -u +%Y%m%dT%H%M%SZ)"
+python3 scripts/exp0006-preflight.py --output-dir "$preflight_dir"
+python3 scripts/render-exp0006-rollback.py \
+  "$preflight_dir/known-good-modules.json" \
+  --output "$preflight_dir/rollback-plan.md"
+
+build_dir="artifacts/EXP-0006-build-$(date -u +%Y%m%dT%H%M%SZ)"
+python3 scripts/build-exp0006.py --output-dir "$build_dir"
+
+# After scoped approval and an enabled session:
+grep 'HDCP_PROBE' kernel.log > hdcp-probe.log
 python3 scripts/decode-hdcp-probe.py hdcp-probe.log > hdcp-probe.json
 sha256sum hdcp-probe.log hdcp-probe.json > artifacts.sha256

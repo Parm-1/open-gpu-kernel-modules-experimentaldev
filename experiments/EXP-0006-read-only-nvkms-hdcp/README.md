@@ -6,7 +6,7 @@ Can a community-built, read-only bridge retrieve meaningful DP HDCP state from t
 
 ## Implementation status
 
-Source-complete and repeatedly full-module-build-passed. Runtime not run. No module has been installed or loaded.
+The implementation is merged in `e9507b77cd2075c82ad34353660666ae58ccf502`. Its final PR head passed all six checks, including complete module compilation. Runtime has not been run; no experimental module has been installed or loaded.
 
 The default-off `hdcp_probe=1` diagnostic preserves:
 
@@ -16,8 +16,18 @@ The default-off `hdcp_probe=1` diagnostic preserves:
 - consolidated raw state flags;
 - validity.
 
-It performs no authentication or stream-type operation.
+It performs no authentication, stream-type, ECF, KMS-property, modeset, protected-playback, or service operation.
+
+## Current blocker
+
+Runtime remains blocked until:
+
+1. the read-only host preflight has no `BLOCK` result;
+2. the machine-specific rollback plan is stored offline;
+3. modules are built and hashed against the exact running kernel;
+4. the human recovery checklist is complete;
+5. operation-scoped module-load approval is recorded.
 
 ## Runtime protocol
 
-See `docs/runtime/EXP-0006-native-protocol.md`. Loading/rebooting remains blocked until the recovery checklist is complete and explicit approval is recorded.
+See `docs/runtime/EXP-0006-native-protocol.md`. The protocol uses separate clean-boot default-off and enabled sessions. A successful build or preflight does not establish `CAPABILITY_ADVERTISED`.
