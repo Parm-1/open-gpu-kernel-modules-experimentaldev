@@ -46,6 +46,11 @@ MODULE_PARM_DESC(
     "Enable drm vblank notification support (1 = enable, 0 = disable (default))");
 module_param_named(vblank, nv_drm_vblank_module_param, bool, 0400);
 
+MODULE_PARM_DESC(
+    hdcp_probe,
+    "Log an experimental read-only HDCP state report during connector detection");
+module_param_named(hdcp_probe, nv_drm_hdcp_probe_module_param, bool, 0400);
+
 #if defined(NV_DRM_HAS_COLOROP)
 MODULE_PARM_DESC(
     color_pipeline,

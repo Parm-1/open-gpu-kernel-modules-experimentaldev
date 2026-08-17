@@ -66,6 +66,8 @@ extern bool nv_drm_fbdev_module_param;
 #endif
 /* Set to true when the vblank support feature is enabled. */
 extern bool nv_drm_vblank_module_param;
+/* Experimental read-only HDCP state report on connector detection. */
+extern bool nv_drm_hdcp_probe_module_param;
 #if defined(NV_DRM_HAS_COLOROP)
 /* Set to true when DRM color pipeline support is enabled. */
 extern bool nv_drm_color_pipeline_module_param;
