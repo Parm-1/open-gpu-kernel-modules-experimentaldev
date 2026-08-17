@@ -50,6 +50,16 @@ jobs:
           python3 scripts/build-exp0006.py --self-test
           python3 scripts/render-exp0006-rollback.py --self-test
           python3 scripts/verify-exp0006-loaded.py --self-test
+      - name: Smoke-test fail-closed baseline artifacts
+        run: |
+          baseline_dir="$RUNNER_TEMP/exp0006-baseline"
+          scripts/collect-native-baseline.sh "$baseline_dir"
+          (
+            cd "$baseline_dir"
+            sha256sum -c artifacts.sha256
+            test -s exit-codes.tsv
+            test -s README.txt
+          )
       - name: Verify preflight command confinement
         run: |
           python3 - <<'PY'
