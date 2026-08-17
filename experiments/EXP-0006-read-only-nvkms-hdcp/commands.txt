@@ -1,5 +1,5 @@
 # Preparation commands are read-only/build-only. Runtime commands remain gated.
-# See docs/runtime/EXP-0006-native-protocol.md.
+# See docs/runtime/EXP-0006-native-protocol.md for the approved three-session sequence.
 
 preflight_dir="artifacts/EXP-0006-preflight-$(date -u +%Y%m%dT%H%M%SZ)"
 python3 scripts/exp0006-preflight.py --output-dir "$preflight_dir"
@@ -9,8 +9,20 @@ python3 scripts/render-exp0006-rollback.py \
 
 build_dir="artifacts/EXP-0006-build-$(date -u +%Y%m%dT%H%M%SZ)"
 python3 scripts/build-exp0006.py --output-dir "$build_dir"
+(
+  cd "$build_dir"
+  sha256sum -c artifacts.sha256
+)
 
-# After scoped approval and an enabled session:
+# After an approved module load, bind the exact manifest hash and expected
+# default-off/enabled parameter through the read-only verifier:
+python3 scripts/verify-exp0006-loaded.py \
+  --manifest "$build_dir/manifest.json" \
+  --expected-manifest-sha256 "$approved_manifest_sha256" \
+  --expect-probe Y \
+  --output loaded-build.json
+
+# Decode only after the enabled kernel log has been preserved:
 grep 'HDCP_PROBE' kernel.log > hdcp-probe.log
 python3 scripts/decode-hdcp-probe.py hdcp-probe.log > hdcp-probe.json
-sha256sum hdcp-probe.log hdcp-probe.json > artifacts.sha256
+sha256sum loaded-build.json hdcp-probe.log hdcp-probe.json > artifacts.sha256
