@@ -1,0 +1,67 @@
+name: apply-read-only-nvkms-kapi
+
+on:
+  push:
+    branches:
+      - agent/read-only-nvkms-hdcp-query
+    paths:
+      - 'scripts/apply-read-only-nvkms-kapi.py'
+      - '.github/workflows/apply-read-only-nvkms-kapi.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  transform-build-and-push:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/read-only-nvkms-hdcp-query
+      - name: Install build dependencies and generic kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential linux-headers-generic
+      - name: Apply read-only NVKMS/KAPI transformation
+        run: python3 scripts/apply-read-only-nvkms-kapi.py
+      - name: Verify safety and interface consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          cmp kernel-open/common/inc/nvkms-kapi.h src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+          git diff | grep -q 'NVKMS_IOCTL_QUERY_DPY_HDCP_STATE'
+          git diff | grep -q 'queryHdcpState'
+          ! git diff | grep -E 'drm_connector_attach_content_protection_property|_SET_TYPE|_RENEGOTIATE' >/dev/null
+          test -z "$(git diff --name-only | grep 'kernel-open/nvidia-drm' || true)"
+      - name: Select kernel headers
+        id: headers
+        shell: bash
+        run: |
+          KDIR=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*-generic' | sort -V | tail -n1)
+          test -n "$KDIR"
+          echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+      - name: Build modules without installing
+        run: make modules -j2 SYSSRC='${{ steps.headers.outputs.kdir }}' SYSOUT='${{ steps.headers.outputs.kdir }}'
+      - name: Commit compiled NVKMS/KAPI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            src/nvidia-modeset/interface/nvkms-api.h \
+            src/nvidia-modeset/src/nvkms.c \
+            kernel-open/common/inc/nvkms-kapi.h \
+            src/nvidia-modeset/kapi/interface/nvkms-kapi.h \
+            src/nvidia-modeset/kapi/src/nvkms-kapi.c
+          git commit -m 'nvkms: expose read-only HDCP state through KAPI'
+          git push origin HEAD:agent/read-only-nvkms-hdcp-query
