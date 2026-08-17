@@ -56,10 +56,12 @@ jobs:
           )
           make clean "${common[@]}"
           make -j2 modules "${common[@]}"
-      - name: Record build identity
+      - name: Validate and record build identity
         shell: bash
         run: |
           set -euo pipefail
+          expected_version='610.57.04'
+          expected_kernel="$(cat driver-build-kernel.txt)"
           modules=(
             kernel-open/nvidia.ko
             kernel-open/nvidia-modeset.ko
@@ -70,16 +72,40 @@ jobs:
           : > driver-build-evidence.txt
           for module in "${modules[@]}"; do
             test -f "$module"
+            version="$(modinfo -F version "$module")"
+            vermagic="$(modinfo -F vermagic "$module")"
+            srcversion="$(modinfo -F srcversion "$module")"
+            signer="$(modinfo -F signer "$module")"
+            test "$version" = "$expected_version"
+            test "${vermagic%% *}" = "$expected_kernel"
+            test -n "$srcversion"
             {
               printf 'module=%s\n' "$module"
               printf 'sha256='; sha256sum "$module" | cut -d' ' -f1
-              printf 'version='; modinfo -F version "$module"
-              printf 'vermagic='; modinfo -F vermagic "$module"
-              printf 'srcversion='; modinfo -F srcversion "$module"
-              printf 'signer='; modinfo -F signer "$module"
-              printf '\n'
+              printf 'version=%s\n' "$version"
+              printf 'vermagic=%s\n' "$vermagic"
+              printf 'srcversion=%s\n' "$srcversion"
+              printf 'signer=%s\n\n' "$signer"
             } >> driver-build-evidence.txt
           done
+      - name: Clean generated module outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          common=(
+            "SYSSRC=${{ steps.headers.outputs.kdir }}"
+            "SYSOUT=${{ steps.headers.outputs.kdir }}"
+            'NV_BUILD_USER=github-actions'
+            'NV_BUILD_HOST=github-actions'
+            'KBUILD_BUILD_USER=github-actions'
+            'KBUILD_BUILD_HOST=github-actions'
+          )
+          make clean "${common[@]}"
+          test ! -e kernel-open/nvidia.ko
+          test ! -e kernel-open/nvidia-modeset.ko
+          test ! -e kernel-open/nvidia-drm.ko
+          test ! -e kernel-open/nvidia-uvm.ko
+          test ! -e kernel-open/nvidia-peermem.ko
       - name: Upload text-only build evidence
         uses: actions/upload-artifact@v4
         with:
