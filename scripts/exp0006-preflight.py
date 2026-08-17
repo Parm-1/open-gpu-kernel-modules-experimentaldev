@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Read-only preflight for EXP-0006.
 
-This program collects only the minimum host facts needed to decide whether the
-native NVIDIA HDCP state experiment is ready for an exact-kernel build and a
-human recovery review. It never installs, unloads, loads, signs, or reboots.
+The tool collects only the minimum host facts needed for an exact-kernel build
+and human recovery review. Its command runner accepts a small allowlist of
+read-only commands and rejects module, privilege, service-state, and reboot
+operations before execution.
 """
 from __future__ import annotations
 
@@ -23,9 +24,11 @@ from pathlib import Path
 from typing import Any, Sequence
 
 EXPECTED_DRIVER_VERSION = "610.57.04"
+EXPECTED_GPU_SUBSTRING = "RTX 2060"
 REQUIRED_MODULES = ("nvidia", "nvidia_modeset", "nvidia_drm")
 OPTIONAL_MODULES = ("nvidia_uvm", "nvidia_peermem")
 STATUS_ORDER = {"PASS": 0, "WARN": 1, "BLOCK": 2}
+MODINFO_FIELDS = {"version", "vermagic", "signer"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -58,10 +61,53 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run_command(name: str, argv: Sequence[str], timeout: int = 20) -> CommandResult:
+def validate_read_only_command(argv: Sequence[str]) -> None:
+    """Reject anything outside the preflight's explicit read-only command set."""
+    args = list(argv)
+    if not args:
+        raise ValueError("empty command")
+    executable = Path(args[0]).name
+    tail = args[1:]
+
+    allowed = False
+    if executable == "git":
+        allowed = tail in (["rev-parse", "HEAD"], ["status", "--porcelain"])
+    elif executable == "modinfo":
+        allowed = (
+            len(tail) == 2
+            and tail[0] == "-n"
+            and tail[1] in REQUIRED_MODULES + OPTIONAL_MODULES
+        ) or (
+            len(tail) == 3
+            and tail[0] == "-F"
+            and tail[1] in MODINFO_FIELDS
+            and tail[2] in REQUIRED_MODULES + OPTIONAL_MODULES
+        )
+    elif executable == "nvidia-smi":
+        allowed = tail == [
+            "--query-gpu=driver_version,name",
+            "--format=csv,noheader,nounits",
+        ]
+    elif executable == "mokutil":
+        allowed = tail == ["--sb-state"]
+    elif executable == "systemctl":
+        allowed = tail in (["is-active", "ssh"], ["is-active", "sshd"])
+
+    if not allowed:
+        raise ValueError(f"command is outside the read-only allowlist: {args!r}")
+
+
+def run_command(
+    name: str,
+    argv: Sequence[str],
+    timeout: int = 20,
+    cwd: Path | None = None,
+) -> CommandResult:
+    validate_read_only_command(argv)
     try:
         proc = subprocess.run(
             list(argv),
+            cwd=cwd,
             check=False,
             capture_output=True,
             text=True,
@@ -103,8 +149,8 @@ def connector_is_direct_dp(name: str) -> bool:
     return re.fullmatch(r"card\d+-DP-\d+", name) is not None
 
 
-def version_matches(actual: str | None, expected: str) -> bool:
-    return actual is not None and actual.strip() == expected
+def vermagic_matches(vermagic: str | None, kernel_release: str) -> bool:
+    return bool(vermagic and vermagic.split(maxsplit=1)[0] == kernel_release)
 
 
 def command_record(result: CommandResult) -> dict[str, Any]:
@@ -126,7 +172,12 @@ def check_native_linux(kernel_release: str) -> Check:
         "native-linux",
         "PASS" if ok else "BLOCK",
         "Native x86-64 Linux detected." if ok else "The target is not native x86-64 Linux.",
-        {"platform": sys.platform, "machine": machine, "kernel_release": kernel_release, "wsl_detected": wsl},
+        {
+            "platform": sys.platform,
+            "machine": machine,
+            "kernel_release": kernel_release,
+            "wsl_detected": wsl,
+        },
         None if ok else "Boot the physical RTX 2060 machine into native x86-64 Linux; WSL/WSLg is source-work only.",
     )
 
@@ -144,17 +195,32 @@ def check_source(repo_root: Path) -> tuple[Check, list[CommandResult]]:
         if content is None or symbol not in content:
             missing.append(f"{relative}:{symbol}")
 
-    git = run_command("git-head", ["git", "-C", str(repo_root), "rev-parse", "HEAD"])
-    commit = git.stdout.strip() if git.returncode == 0 else None
-    evidence = {"repo_root": str(repo_root), "commit": commit, "missing_symbols": missing}
-    check = Check(
-        "source-tree",
-        "PASS" if not missing else "BLOCK",
-        "Merged read-only HDCP implementation is present." if not missing else "The source tree is missing required EXP-0006 symbols.",
-        evidence,
-        None if not missing else "Use main at or after merge commit e9507b77cd2075c82ad34353660666ae58ccf502.",
+    git_head = run_command("git-head", ["git", "rev-parse", "HEAD"], cwd=repo_root)
+    git_status = run_command("git-status", ["git", "status", "--porcelain"], cwd=repo_root)
+    commit = git_head.stdout.strip() if git_head.returncode == 0 else None
+    dirty = bool(git_status.stdout.strip()) if git_status.returncode == 0 else None
+
+    problems: list[str] = []
+    if missing:
+        problems.append("missing source symbols")
+    if not commit:
+        problems.append("source tree is not a readable Git checkout")
+    if dirty is None:
+        problems.append("source cleanliness could not be determined")
+    elif dirty:
+        problems.append("source tree has uncommitted or untracked changes")
+
+    ok = not problems
+    return (
+        Check(
+            "source-tree",
+            "PASS" if ok else "BLOCK",
+            "Merged read-only implementation is present in a clean Git checkout." if ok else "Source identity is ambiguous.",
+            {"commit": commit, "dirty": dirty, "missing_symbols": missing, "problems": problems},
+            None if ok else "Use a clean checkout of main at or after merge e9507b77cd2075c82ad34353660666ae58ccf502.",
+        ),
+        [git_head, git_status],
     )
-    return check, [git]
 
 
 def check_kernel_build_tree(kernel_release: str) -> Check:
@@ -170,32 +236,43 @@ def check_kernel_build_tree(kernel_release: str) -> Check:
 
 
 def check_tools() -> Check:
-    required = ("make", "cc", "modinfo", "sha256sum", "python3")
-    optional = ("drm_info", "modetest", "nvidia-bug-report.sh", "mokutil", "systemctl")
+    required = (
+        "git",
+        "make",
+        "cc",
+        "modinfo",
+        "nvidia-smi",
+        "sha256sum",
+        "python3",
+        "drm_info",
+        "modetest",
+        "nvidia-bug-report.sh",
+    )
+    optional = ("mokutil", "systemctl")
     required_paths = {name: shutil.which(name) for name in required}
     optional_paths = {name: shutil.which(name) for name in optional}
-    missing_required = [name for name, value in required_paths.items() if value is None]
-    missing_evidence = [name for name in ("drm_info", "modetest", "nvidia-bug-report.sh") if optional_paths[name] is None]
-    if missing_required or missing_evidence:
-        status = "BLOCK"
-    elif optional_paths["mokutil"] is None or optional_paths["systemctl"] is None:
-        status = "WARN"
-    else:
-        status = "PASS"
-    summary = "Required build and evidence tools are available."
-    resolution = None
-    if missing_required or missing_evidence:
-        summary = "Required tools are missing."
-        resolution = "Install: " + ", ".join(missing_required + missing_evidence)
-    elif status == "WARN":
-        summary = "Core tools are present; Secure Boot or service checks require manual verification."
-        resolution = "Install mokutil/systemd tooling or document equivalent checks before approval."
+    missing = [name for name, value in required_paths.items() if value is None]
+    if missing:
+        return Check(
+            "tools",
+            "BLOCK",
+            "Required build or evidence tools are missing.",
+            {"required": required_paths, "optional": optional_paths},
+            "Install: " + ", ".join(missing),
+        )
+    if any(value is None for value in optional_paths.values()):
+        return Check(
+            "tools",
+            "WARN",
+            "Core tools are present; Secure Boot or service checks need manual verification.",
+            {"required": required_paths, "optional": optional_paths},
+            "Install mokutil/systemd tooling or document equivalent checks before approval.",
+        )
     return Check(
         "tools",
-        status,
-        summary,
+        "PASS",
+        "Required build and evidence tools are available.",
         {"required": required_paths, "optional": optional_paths},
-        resolution,
     )
 
 
@@ -208,18 +285,31 @@ def module_metadata(module: str) -> tuple[dict[str, Any], list[CommandResult]]:
     ]
     filename = results[0].stdout.strip() if results[0].returncode == 0 else None
     path = Path(filename) if filename and filename != "(builtin)" else None
+    exists = bool(path and path.is_file())
+    digest: str | None = None
+    hash_error: str | None = None
+    if exists and path is not None:
+        try:
+            digest = sha256_file(path)
+        except OSError as exc:
+            hash_error = str(exc)
     return {
         "name": module,
         "filename": filename,
-        "exists": bool(path and path.is_file()),
-        "sha256": sha256_file(path) if path and path.is_file() else None,
+        "exists": exists,
+        "sha256": digest,
+        "hash_error": hash_error,
         "version": results[1].stdout.strip() if results[1].returncode == 0 else None,
         "vermagic": results[2].stdout.strip() if results[2].returncode == 0 else None,
         "signer": results[3].stdout.strip() if results[3].returncode == 0 else None,
     }, results
 
 
-def check_driver_stack(expected: str) -> tuple[Check, dict[str, Any], list[CommandResult]]:
+def check_driver_stack(
+    expected_version: str,
+    expected_gpu_substring: str,
+    kernel_release: str,
+) -> tuple[Check, dict[str, Any], list[CommandResult]]:
     module_records: list[dict[str, Any]] = []
     commands: list[CommandResult] = []
     for module in REQUIRED_MODULES + OPTIONAL_MODULES:
@@ -227,14 +317,10 @@ def check_driver_stack(expected: str) -> tuple[Check, dict[str, Any], list[Comma
         module_records.append(record)
         commands.extend(results)
 
-    required_records = [record for record in module_records if record["name"] in REQUIRED_MODULES]
-    missing = [record["name"] for record in required_records if not record["exists"]]
-    versions = sorted({str(record["version"]) for record in required_records if record["version"]})
-
     proc_modules = text_or_none(Path("/proc/modules")) or ""
-    loaded = sorted({line.split()[0] for line in proc_modules.splitlines() if line.strip()})
-    nouveau_loaded = "nouveau" in loaded
-    missing_loaded = [module for module in REQUIRED_MODULES if module not in loaded]
+    loaded = {line.split()[0] for line in proc_modules.splitlines() if line.strip()}
+    for record in module_records:
+        record["loaded"] = record["name"] in loaded
 
     smi = run_command(
         "nvidia-smi-driver",
@@ -242,45 +328,66 @@ def check_driver_stack(expected: str) -> tuple[Check, dict[str, Any], list[Comma
     )
     commands.append(smi)
     userspace_version, gpu_names = parse_nvidia_smi_driver(smi.stdout) if smi.returncode == 0 else (None, [])
+    modeset = text_or_none(Path("/sys/module/nvidia_drm/parameters/modeset"))
+    fbdev = text_or_none(Path("/sys/module/nvidia_drm/parameters/fbdev"))
 
     problems: list[str] = []
-    if missing:
-        problems.append("missing installed modules: " + ", ".join(missing))
-    if versions != [expected]:
-        problems.append(f"module versions are {versions or ['unknown']}, expected {expected}")
-    if userspace_version != expected:
-        problems.append(f"userspace driver is {userspace_version or 'unknown'}, expected {expected}")
-    if nouveau_loaded:
+    for record in module_records:
+        name = str(record["name"])
+        required = name in REQUIRED_MODULES
+        relevant = required or bool(record["loaded"])
+        if required and not record["exists"]:
+            problems.append(f"missing installed module: {name}")
+        if required and not record["sha256"]:
+            problems.append(f"module hash unavailable: {name}")
+        if relevant and record["version"] != expected_version:
+            problems.append(f"{name} version is {record['version'] or 'unknown'}, expected {expected_version}")
+        if relevant and not vermagic_matches(record["vermagic"], kernel_release):
+            problems.append(f"{name} vermagic does not match {kernel_release}")
+        if required and not record["loaded"]:
+            problems.append(f"required module is not loaded: {name}")
+
+    if userspace_version != expected_version:
+        problems.append(f"userspace driver is {userspace_version or 'unknown'}, expected {expected_version}")
+    if len(gpu_names) != 1:
+        problems.append(f"expected one NVIDIA GPU, found {len(gpu_names)}")
+    elif expected_gpu_substring.lower() not in gpu_names[0].lower():
+        problems.append(f"GPU {gpu_names[0]!r} does not match target {expected_gpu_substring!r}")
+    if "nouveau" in loaded:
         problems.append("nouveau is loaded")
-    if missing_loaded:
-        problems.append("required NVIDIA modules are not loaded: " + ", ".join(missing_loaded))
+    if modeset not in {"Y", "1"}:
+        problems.append(f"nvidia_drm modeset is {modeset or 'unknown'}, expected enabled")
 
     status = "PASS" if not problems else "BLOCK"
-    check = Check(
-        "nvidia-stack",
-        status,
-        "Installed and loaded NVIDIA stack matches the pinned release." if status == "PASS" else "The installed/loaded NVIDIA stack does not match the pinned release.",
-        {
-            "expected_version": expected,
-            "userspace_version": userspace_version,
-            "gpu_names": gpu_names,
-            "loaded_required": [module for module in REQUIRED_MODULES if module in loaded],
-            "nouveau_loaded": nouveau_loaded,
-            "problems": problems,
-        },
-        None if status == "PASS" else "Install and boot one coherent NVIDIA 610.57.04 userspace, kernel-module, and GSP firmware stack before building or loading the experiment.",
-    )
-    for record in module_records:
-        record["loaded"] = record["name"] in loaded
     snapshot = {
-        "expected_version": expected,
+        "schema_version": 1,
+        "generated_at": utc_now(),
+        "kernel_release": kernel_release,
+        "expected_version": expected_version,
+        "expected_gpu_substring": expected_gpu_substring,
+        "gpu_names": gpu_names,
         "modules": module_records,
-        "nvidia_drm_parameters": {
-            "modeset": text_or_none(Path("/sys/module/nvidia_drm/parameters/modeset")),
-            "fbdev": text_or_none(Path("/sys/module/nvidia_drm/parameters/fbdev")),
-        },
+        "nvidia_drm_parameters": {"modeset": modeset, "fbdev": fbdev},
     }
-    return check, snapshot, commands
+    return (
+        Check(
+            "nvidia-stack",
+            status,
+            "Installed and loaded NVIDIA stack matches the pinned target." if status == "PASS" else "The NVIDIA stack does not match the pinned target.",
+            {
+                "expected_version": expected_version,
+                "expected_gpu_substring": expected_gpu_substring,
+                "userspace_version": userspace_version,
+                "gpu_names": gpu_names,
+                "nouveau_loaded": "nouveau" in loaded,
+                "modeset": modeset,
+                "problems": problems,
+            },
+            None if status == "PASS" else "Boot one coherent NVIDIA 610.57.04 RTX 2060 stack with nvidia-drm KMS enabled before building or loading the experiment.",
+        ),
+        snapshot,
+        commands,
+    )
 
 
 def check_gsp_firmware(expected: str) -> Check:
@@ -294,10 +401,10 @@ def check_gsp_firmware(expected: str) -> Check:
     if exact:
         status, summary, resolution = "PASS", "Pinned-release Turing GSP firmware was found.", None
     elif candidates:
-        status, summary = "WARN", "Turing GSP firmware was found, but not under the pinned release directory."
-        resolution = "Confirm from the distribution package manifest that the firmware belongs to NVIDIA 610.57.04."
+        status, summary = "WARN", "Turing GSP firmware was found outside the pinned-release directory."
+        resolution = "Confirm from the package manifest that the firmware belongs to NVIDIA 610.57.04."
     else:
-        status, summary = "WARN", "Turing GSP firmware was not found in the standard filesystem locations."
+        status, summary = "WARN", "Turing GSP firmware was not found in standard filesystem locations."
         resolution = "Locate and record the exact 610.57.04 GSP firmware source before approval; packaging layouts vary."
     return Check(
         "gsp-firmware",
@@ -317,15 +424,15 @@ def check_secure_boot() -> tuple[Check, CommandResult]:
             "WARN",
             "Secure Boot state could not be determined automatically.",
             {"returncode": result.returncode},
-            "Record firmware Secure Boot state manually. Unsigned experimental modules must not be attempted when enforcement is active.",
+            "Record firmware Secure Boot state manually before approval.",
         )
     elif "enabled" in combined:
         check = Check(
             "secure-boot",
-            "BLOCK",
-            "Secure Boot is enabled; an unsigned local build will not load.",
+            "WARN",
+            "Secure Boot is enabled; runtime requires a tested signing and enrollment path.",
             {"state": result.stdout.strip()},
-            "Prepare a tested module-signing/enrollment path or use an expendable test boot with Secure Boot disabled before requesting approval.",
+            "Build signed modules only after the key, public certificate, enrollment state, and recovery path are reviewed. Do not attempt an unsigned load.",
         )
     else:
         check = Check("secure-boot", "PASS", "Secure Boot is not reported as enabled.", {"state": result.stdout.strip()})
@@ -351,9 +458,8 @@ def check_ssh() -> tuple[Check, list[CommandResult]]:
 
 
 def check_topology() -> Check:
-    drm_root = Path("/sys/class/drm")
     statuses: list[dict[str, Any]] = []
-    for status_path in sorted(drm_root.glob("card*-*/status")):
+    for status_path in sorted(Path("/sys/class/drm").glob("card*-*/status")):
         state = text_or_none(status_path) or "unreadable"
         connector = status_path.parent.name
         driver_path = status_path.parent / "device" / "driver"
@@ -386,10 +492,12 @@ def manual_checks() -> list[Check]:
     items = [
         ("manual-expendable-install", "The native Linux installation is expendable or independently recoverable."),
         ("manual-known-good-boot", "A known-good kernel/NVIDIA boot entry has been boot-tested."),
+        ("manual-second-device-ssh", "SSH login from a second device has been tested in the current boot."),
         ("manual-local-tty", "Local TTY login has been tested."),
-        ("manual-offline-rollback", "Rollback commands and the known-good module snapshot are stored offline."),
+        ("manual-offline-rollback", "Rollback commands and the known-good snapshot are stored offline."),
+        ("manual-gsp-identity", "The active GSP firmware package identity has been verified."),
         ("manual-display-mode", "The sole display is SDR 1920×1080 60 Hz with HDR and VRR disabled."),
-        ("manual-approval", "Explicit approval to install/load/reboot has been recorded."),
+        ("manual-approval", "Operation-scoped module and any separate reboot approval have been recorded."),
     ]
     return [
         Check(check_id, "WARN", statement, {"automatic_verification": False}, "Operator must check and record this item before execution.")
@@ -428,14 +536,19 @@ def render_markdown(report: dict[str, Any]) -> str:
             "",
             "## Claim boundary",
             "",
-            "Passing this preflight proves only that the machine appears ready for an exact-kernel build and human recovery review. It does not prove `CAPABILITY_ADVERTISED` or any later security state.",
+            "Passing this preflight proves only readiness for an exact-kernel build and human recovery review. It does not prove `CAPABILITY_ADVERTISED` or any later security state.",
             "",
         ]
     )
     return "\n".join(lines)
 
 
-def write_outputs(output_dir: Path, report: dict[str, Any], snapshot: dict[str, Any], commands: list[CommandResult]) -> None:
+def write_outputs(
+    output_dir: Path,
+    report: dict[str, Any],
+    snapshot: dict[str, Any],
+    commands: list[CommandResult],
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=False)
     (output_dir / "preflight.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     (output_dir / "preflight.md").write_text(render_markdown(report))
@@ -444,12 +557,13 @@ def write_outputs(output_dir: Path, report: dict[str, Any], snapshot: dict[str, 
         for result in commands:
             stream.write(json.dumps(command_record(result), sort_keys=True) + "\n")
     (output_dir / "README.txt").write_text(
-        "Read-only EXP-0006 preflight artifacts. Review before sharing. No EDID bytes, host name, account data, keys, certificates, licenses, or media were collected.\n"
+        "Read-only EXP-0006 preflight artifacts. Review local filesystem paths and every file before sharing. No EDID bytes, host name, hardware serial, credentials, keys, certificates, licenses, or media were queried.\n"
     )
-    hash_lines: list[str] = []
-    for path in sorted(output_dir.iterdir()):
-        if path.is_file() and path.name != "artifacts.sha256":
-            hash_lines.append(f"{sha256_file(path)}  {path.name}")
+    hash_lines = [
+        f"{sha256_file(path)}  {path.name}"
+        for path in sorted(output_dir.iterdir())
+        if path.is_file() and path.name != "artifacts.sha256"
+    ]
     (output_dir / "artifacts.sha256").write_text("\n".join(hash_lines) + "\n")
 
 
@@ -460,9 +574,22 @@ def self_test() -> None:
     assert not connector_is_direct_dp("card0-HDMI-A-1")
     version, names = parse_nvidia_smi_driver("610.57.04, NVIDIA GeForce RTX 2060\n")
     assert version == "610.57.04" and names == ["NVIDIA GeForce RTX 2060"]
-    version, _ = parse_nvidia_smi_driver("610.57.04, A\n609.00, B\n")
-    assert version is None
-    assert version_matches("610.57.04", EXPECTED_DRIVER_VERSION)
+    assert vermagic_matches("6.8.0-137-generic SMP preempt mod_unload", "6.8.0-137-generic")
+    assert not vermagic_matches("6.8.0-136-generic SMP", "6.8.0-137-generic")
+    validate_read_only_command(["git", "rev-parse", "HEAD"])
+    validate_read_only_command(["modinfo", "-F", "version", "nvidia"])
+    for forbidden in (
+        ["modprobe", "-r", "nvidia"],
+        ["sudo", "modprobe", "-r", "nvidia"],
+        ["systemctl", "isolate", "multi-user.target"],
+        ["sh", "-c", "true"],
+    ):
+        try:
+            validate_read_only_command(forbidden)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"forbidden command accepted: {forbidden}")
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "sample"
         path.write_bytes(b"abc")
@@ -483,6 +610,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--kernel-release", default=platform.release())
     parser.add_argument("--expected-driver-version", default=EXPECTED_DRIVER_VERSION)
+    parser.add_argument("--expected-gpu-substring", default=EXPECTED_GPU_SUBSTRING)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--print-json", action="store_true")
     args = parser.parse_args()
@@ -499,7 +627,11 @@ def main() -> int:
     commands.extend(source_commands)
     checks.append(check_kernel_build_tree(args.kernel_release))
     checks.append(check_tools())
-    driver_check, snapshot, driver_commands = check_driver_stack(args.expected_driver_version)
+    driver_check, snapshot, driver_commands = check_driver_stack(
+        args.expected_driver_version,
+        args.expected_gpu_substring,
+        args.kernel_release,
+    )
     checks.append(driver_check)
     commands.extend(driver_commands)
     checks.append(check_gsp_firmware(args.expected_driver_version))
@@ -513,13 +645,20 @@ def main() -> int:
     checks.extend(manual_checks())
 
     highest = max((STATUS_ORDER[check.status] for check in checks), default=0)
-    overall = "BLOCKED" if highest == STATUS_ORDER["BLOCK"] else "MANUAL_REVIEW_REQUIRED" if highest == STATUS_ORDER["WARN"] else "AUTOMATED_CHECKS_PASS"
+    overall = (
+        "BLOCKED"
+        if highest == STATUS_ORDER["BLOCK"]
+        else "MANUAL_REVIEW_REQUIRED"
+        if highest == STATUS_ORDER["WARN"]
+        else "AUTOMATED_CHECKS_PASS"
+    )
     report = {
         "schema_version": 1,
         "experiment": "EXP-0006-read-only-nvkms-hdcp",
         "generated_at": utc_now(),
         "overall": overall,
         "expected_driver_version": args.expected_driver_version,
+        "expected_gpu_substring": args.expected_gpu_substring,
         "kernel_release": args.kernel_release,
         "checks": [dataclasses.asdict(check) for check in checks],
         "claim_boundary": "Read-only readiness evidence only; no runtime security state is proven.",
