@@ -3,3 +3,5 @@
 *.o.cmd
 *.o.d
 _out/
+/artifacts/
+/build/

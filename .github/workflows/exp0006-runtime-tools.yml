@@ -1,0 +1,60 @@
+name: exp0006-runtime-tools
+
+on:
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'scripts/exp0006-preflight.py'
+      - 'scripts/build-exp0006.py'
+      - 'scripts/render-exp0006-rollback.py'
+      - 'docs/runtime/EXP-0006-native-protocol.md'
+      - 'docs/runtime/EXP-0006-approval-template.md'
+      - '.github/workflows/exp0006-runtime-tools.yml'
+  pull_request:
+    paths:
+      - 'scripts/exp0006-preflight.py'
+      - 'scripts/build-exp0006.py'
+      - 'scripts/render-exp0006-rollback.py'
+      - 'docs/runtime/EXP-0006-native-protocol.md'
+      - 'docs/runtime/EXP-0006-approval-template.md'
+      - '.github/workflows/exp0006-runtime-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Python tools
+        run: |
+          python3 -m py_compile \
+            scripts/exp0006-preflight.py \
+            scripts/build-exp0006.py \
+            scripts/render-exp0006-rollback.py
+      - name: Run deterministic self-tests
+        run: |
+          python3 scripts/exp0006-preflight.py --self-test
+          python3 scripts/build-exp0006.py --self-test
+          python3 scripts/render-exp0006-rollback.py --self-test
+      - name: Reject privileged operations in read-only preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -En '(^|[^[:alnum:]_])(insmod|rmmod|modprobe|reboot|shutdown)([^[:alnum:]_]|$)' \
+              scripts/exp0006-preflight.py; then
+            echo 'preflight must remain read-only' >&2
+            exit 1
+          fi
+      - name: Validate protocol boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'BLOCKED_PENDING_PREFLIGHT_RECOVERY_REVIEW_AND_EXPLICIT_LOAD_APPROVAL' \
+            docs/runtime/EXP-0006-native-protocol.md
+          grep -q 'does not grant approval' \
+            docs/runtime/EXP-0006-approval-template.md
