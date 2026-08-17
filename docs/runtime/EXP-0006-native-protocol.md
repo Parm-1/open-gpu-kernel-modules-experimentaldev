@@ -1,10 +1,10 @@
 # EXP-0006 native runtime protocol
 
-Status: `BLOCKED_PENDING_RECOVERY_AND_EXPLICIT_LOAD_APPROVAL`
+Status: `BLOCKED_PENDING_PREFLIGHT_RECOVERY_REVIEW_AND_EXPLICIT_LOAD_APPROVAL`
 
 ## Objective
 
-Classify whether the RTX 2060's native Linux RM/GSP path permits the compiled read-only HDCP state query. This protocol performs no authentication request, stream-type selection, KMS content-protection property change, or media playback.
+Classify whether the RTX 2060's native Linux RM/GSP path permits the compiled read-only HDCP state query. This protocol performs no authentication request, stream-type selection, KMS content-protection property change, protected playback, or service test.
 
 ## Required topology
 
@@ -12,119 +12,165 @@ Classify whether the RTX 2060's native Linux RM/GSP path permits the compiled re
 RTX 2060 → direct DisplayPort cable → one HDCP 2.2/2.3-capable display
 ```
 
-Use native Linux, SDR 1920×1080 60 Hz, no secondary output, MST, adapter, dock, KVM, receiver, capture device, HDR, or VRR.
+Use native x86-64 Linux, SDR 1920×1080 60 Hz, no secondary output, MST, adapter, dock, KVM, receiver, capture device, HDR, or VRR.
 
-## Checkpoint
+## Phase A: read-only host preflight
 
-Before any module installation/load or reboot:
-
-1. Complete `docs/recovery/native-test-recovery-checklist.md`.
-2. Verify SSH and a local TTY from a known-good driver boot.
-3. Match the experimental kernel modules, installed NVIDIA userspace, and GSP firmware to 610.57.04.
-4. Archive the unmodified baseline from `scripts/collect-native-baseline.sh`.
-5. Record the known-good module paths and rollback commands offline.
-6. Record explicit approval for the module-load/reboot operation.
-
-## Build-only validation already completed
-
-The branch has repeatedly completed a full module build against generic kernel headers. Before runtime, rebuild against the exact target kernel:
+Run from the merged repository on the native test machine. This phase never changes the driver or boot state.
 
 ```bash
-kernel_release="$(uname -r)"
-kernel_build="/lib/modules/$kernel_release/build"
-test -d "$kernel_build"
-make modules -j2 SYSSRC="$kernel_build" SYSOUT="$kernel_build"
+preflight_dir="artifacts/EXP-0006-preflight-$(date -u +%Y%m%dT%H%M%SZ)"
+python3 scripts/exp0006-preflight.py --output-dir "$preflight_dir"
+python3 scripts/render-exp0006-rollback.py \
+  "$preflight_dir/known-good-modules.json" \
+  --output "$preflight_dir/rollback-plan.md"
+(
+  cd "$preflight_dir"
+  sha256sum -c artifacts.sha256
+)
 ```
 
-That remains source/build evidence only.
+Exit status `2` means at least one blocker exists. Do not build or request runtime approval until every `BLOCK` result is resolved. `WARN` results include manual recovery and display-mode checks that cannot be proven by a script.
 
-## Prove module identity before loading
+Store `rollback-plan.md`, `known-good-modules.json`, and `artifacts.sha256` on a second device before any module action.
 
-Run from the repository root and retain these outputs:
+## Phase B: human recovery checkpoint
+
+Complete every item in `docs/recovery/native-test-recovery-checklist.md` and fill in `docs/runtime/EXP-0006-approval-template.md`.
+
+The approval must identify:
+
+- repository commit;
+- exact target kernel;
+- preflight artifact hash;
+- exact-kernel build manifest hash;
+- known-good module snapshot hash;
+- whether stopping the graphical target and unloading/loading modules is approved;
+- whether a reboot is separately approved.
+
+Approval for source work or building is not approval to load modules. A reboot is not implied by module-load approval.
+
+## Phase C: exact-target-kernel build
+
+Build on the native test machine against the running kernel. GitHub's generic-header build is useful CI evidence but is not a runtime artifact.
 
 ```bash
-experimental_modules=(
-  kernel-open/nvidia.ko
-  kernel-open/nvidia-modeset.ko
-  kernel-open/nvidia-drm.ko
+build_dir="artifacts/EXP-0006-build-$(date -u +%Y%m%dT%H%M%SZ)"
+python3 scripts/build-exp0006.py --output-dir "$build_dir"
+(
+  cd "$build_dir"
+  sha256sum -c artifacts.sha256
+  python3 -m json.tool manifest.json >/dev/null
 )
+```
 
-sha256sum "${experimental_modules[@]}" > experimental-modules.sha256
-for module in "${experimental_modules[@]}"; do
+The build tool fails closed unless all five expected NVIDIA modules report version `610.57.04` and a `vermagic` matching the target kernel. It copies modules into a new evidence directory and does not install or load them.
+
+When Secure Boot enforcement is active, do not attempt an unsigned module. The build tool accepts `--sign-key` and `--sign-cert`, but key enrollment and a tested recovery path remain separate manual prerequisites. Private key material is never copied into the artifact directory.
+
+## Phase D: prove module identity
+
+Before approval is exercised, preserve these outputs with the build artifacts:
+
+```bash
+uname -r
+cat "$build_dir/manifest.json"
+sha256sum "$build_dir"/modules/*.ko
+for module in "$build_dir"/modules/*.ko; do
+  printf '\n== %s ==\n' "$module"
   modinfo -F filename "$module"
   modinfo -F version "$module"
   modinfo -F vermagic "$module"
+  modinfo -F signer "$module"
 done
-
-uname -r
-modinfo -n nvidia || true
-modinfo -n nvidia_modeset || true
-modinfo -n nvidia_drm || true
 ```
 
-Do not continue unless all experimental files exist, their `vermagic` matches the target kernel, and the installed userspace/GSP stack is the matching NVIDIA release.
+Do not continue if the source commit, module version, target-kernel `vermagic`, signature state, or hashes are ambiguous.
 
-## Approved runtime sequence
+## Phase E: approved runtime sessions
 
-Execute from SSH after the checkpoint. Save all output in a new artifact directory. These commands deliberately use exact local paths rather than `modprobe`, which could silently select the installed known-good modules.
+Use two clean-boot sessions. Execute from working SSH, with local TTY recovery also proven. The commands intentionally use exact local paths rather than `modprobe` for the experimental files.
+
+### Session 1: default-off negative control
 
 ```bash
-artifact_dir="artifacts/EXP-0006-$(date -u +%Y%m%dT%H%M%SZ)"
+artifact_dir="artifacts/EXP-0006-negative-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$artifact_dir"
 scripts/collect-native-baseline.sh "$artifact_dir/preload-baseline"
-cp experimental-modules.sha256 "$artifact_dir/"
+start_time="$(date --iso-8601=seconds)"
 
-# Stop users of the active display stack before replacement.
 sudo systemctl isolate multi-user.target
-
-# Remove the known-good display modules in dependency order. Stop on failure.
 sudo modprobe -r nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia
 
-# Load the exact locally built experimental files in dependency order.
-sudo insmod "$(realpath kernel-open/nvidia.ko)"
-sudo insmod "$(realpath kernel-open/nvidia-modeset.ko)"
-sudo insmod "$(realpath kernel-open/nvidia-drm.ko)" modeset=1 hdcp_probe=1
+sudo insmod "$(realpath "$build_dir/modules/nvidia.ko")"
+sudo insmod "$(realpath "$build_dir/modules/nvidia-modeset.ko")"
+sudo insmod "$(realpath "$build_dir/modules/nvidia-drm.ko")" modeset=1
 
-# Verify that the opt-in diagnostic is active before accepting any log as evidence.
+test "$(cat /sys/module/nvidia_drm/parameters/hdcp_probe)" = "N"
+modetest -M nvidia-drm -c \
+  >"$artifact_dir/modetest.stdout.txt" \
+  2>"$artifact_dir/modetest.stderr.txt" || true
+sudo journalctl -k -b --since "$start_time" --no-pager \
+  >"$artifact_dir/kernel.log"
+if grep -q 'HDCP_PROBE' "$artifact_dir/kernel.log"; then
+  echo 'FAIL: default-off control emitted HDCP_PROBE' >&2
+  exit 1
+fi
+```
+
+Restore the known-good stack using the reviewed machine-specific rollback plan, verify its paths and version, and reboot to the known-good entry before Session 2.
+
+### Session 2: read-only probe enabled
+
+```bash
+artifact_dir="artifacts/EXP-0006-probe-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$artifact_dir"
+scripts/collect-native-baseline.sh "$artifact_dir/preload-baseline"
+start_time="$(date --iso-8601=seconds)"
+
+sudo systemctl isolate multi-user.target
+sudo modprobe -r nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia
+
+sudo insmod "$(realpath "$build_dir/modules/nvidia.ko")"
+sudo insmod "$(realpath "$build_dir/modules/nvidia-modeset.ko")"
+sudo insmod "$(realpath "$build_dir/modules/nvidia-drm.ko")" \
+  modeset=1 hdcp_probe=1
+
 test "$(cat /sys/module/nvidia_drm/parameters/hdcp_probe)" = "Y"
-cat /sys/module/nvidia/version | tee "$artifact_dir/loaded-nvidia-version.txt"
+cat /sys/module/nvidia/version \
+  | tee "$artifact_dir/loaded-nvidia-version.txt"
 cat /sys/module/nvidia_drm/parameters/hdcp_probe \
   | tee "$artifact_dir/loaded-hdcp-probe-parameter.txt"
 
-sudo journalctl -k -b --no-pager | grep 'HDCP_PROBE' \
+modetest -M nvidia-drm -c \
+  >"$artifact_dir/modetest.stdout.txt" \
+  2>"$artifact_dir/modetest.stderr.txt" || true
+sudo journalctl -k -b --since "$start_time" --no-pager \
+  | tee "$artifact_dir/kernel.log"
+grep 'HDCP_PROBE' "$artifact_dir/kernel.log" \
   | tee "$artifact_dir/hdcp-probe.log"
 python3 scripts/decode-hdcp-probe.py "$artifact_dir/hdcp-probe.log" \
   | tee "$artifact_dir/hdcp-probe.json"
 find "$artifact_dir" -type f -print0 | sort -z | xargs -0 sha256sum \
-  > "$artifact_dir/artifacts.sha256"
+  >"$artifact_dir/artifacts.sha256"
 ```
 
-If any unload, insertion, version, parameter, or connector-identity check fails, classify the run `INCONCLUSIVE` and restore the known-good stack. Do not improvise around a failure.
+Restore and verify the known-good stack before returning to graphical mode. If any unload, insertion, version, parameter, connector-identity, decode, or restoration check fails, stop and classify the session `INCONCLUSIVE`. Never use force-removal or improvise around a failed recovery check.
 
 ## Required controls
 
-- **Default-off control:** repeat with the same exact experimental files but omit `hdcp_probe=1`; there must be no `HDCP_PROBE` line.
-- **Repeatability:** reproduce after a clean boot at least twice.
-- **Topology:** confirm `/sys/class/drm` identifies the active physical connector as `nvidia-drm` DisplayPort SST.
-- **Module identity:** preserve local module hashes, target-kernel `vermagic`, loaded NVIDIA version, and parameter state.
-- **Error preservation:** retain raw transport, query result, RM status, flags, and validity.
-- **No protection claim:** an unauthenticated/unencrypted result is expected when no client requested protection.
+- **Default-off:** the same exact experimental build without `hdcp_probe=1` emits no `HDCP_PROBE` record.
+- **Repeatability:** reproduce the enabled result after at least two clean boots.
+- **Topology:** `/sys/class/drm` and `modetest` show one physical NVIDIA DisplayPort SST connector.
+- **Module identity:** preserve source commit, local module hashes, target-kernel `vermagic`, signatures, loaded NVIDIA version, and parameter state.
+- **Error preservation:** retain raw transport result, detailed query result, RM status, flags, validity, complete kernel log, stdout, and stderr.
+- **No protection claim:** unauthenticated and unencrypted state is expected because no client requested protection.
 
 ## Gate 1 verdicts
 
-- `COMMUNITY_PATH_CONFIRMED`: transport succeeds, detailed query succeeds, `valid=1`, and capability/state observations are plausible under controls.
+- `COMMUNITY_PATH_CONFIRMED`: transport succeeds, the detailed query succeeds, `valid=1`, and capability/state observations are plausible and repeatable under all controls.
 - `NARROW_NVIDIA_HOOK_REQUIRED`: the public route reaches the expected owner but a specific missing authorization or context is demonstrated.
 - `VENDOR_BACKEND_BLOCKED`: a supported direct-DP route reproducibly fails at RM/GSP with preserved status.
-- `INCONCLUSIVE`: topology, module identity, or observations are ambiguous.
+- `INCONCLUSIVE`: topology, module identity, recovery, or observations are ambiguous.
 
-## Rollback
-
-The recovery checklist must contain machine-specific rollback commands. The intended normal path is:
-
-```bash
-sudo modprobe -r nvidia_drm nvidia_modeset nvidia
-sudo modprobe nvidia_drm modeset=1
-sudo systemctl isolate graphical.target
-```
-
-Confirm the reloaded module paths are the recorded known-good installed paths. If the graphical stack does not recover, remain on SSH/TTY and use the tested known-good boot entry. Do not begin authentication control or KMS property work until the Gate 1 evidence is reviewed.
+Do not begin authentication control, Type 1 selection, KMS property work, protected decode, or service testing until the Gate 1 evidence has been reviewed and one verdict has been assigned.
