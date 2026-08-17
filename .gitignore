@@ -2,6 +2,13 @@
 *.o_binary
 *.o.cmd
 *.o.d
+*.ko
+*.ko.cmd
+*.mod
+*.mod.c
+*.mod.o
+Module.symvers
+modules.order
 _out/
 /artifacts/
 /build/
