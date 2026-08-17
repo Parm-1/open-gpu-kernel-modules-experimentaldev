@@ -2,8 +2,10 @@
 """Build and stage EXP-0006 modules for the exact running kernel.
 
 The tool is build-only. It never installs, unloads, loads, changes boot state,
-or reboots. Optional signing happens only when both explicit local inputs are
-provided; the private key is never copied into the evidence directory.
+or reboots. It performs exact-header pre/post cleaning, verifies the source tree
+is clean again, and replaces build user/host strings with fixed values. Optional
+signing happens only when both explicit local inputs are provided; the private
+key is never copied into the evidence directory.
 """
 from __future__ import annotations
 
@@ -22,6 +24,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 EXPECTED_VERSION = "610.57.04"
+FIXED_BUILD_USER = "exp0006"
+FIXED_BUILD_HOST = "exp0006"
 REQUIRED_SOURCE_SYMBOLS = {
     "src/common/displayport/src/dp_evoadapter.cpp": "queryHDCPRawState",
     "src/nvidia-modeset/src/nvkms.c": "NVKMS_IOCTL_QUERY_DPY_HDCP_STATE",
@@ -68,6 +72,14 @@ def run(
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    env = {
+        **os.environ,
+        "LC_ALL": "C",
+        "NV_BUILD_USER": FIXED_BUILD_USER,
+        "NV_BUILD_HOST": FIXED_BUILD_HOST,
+        "KBUILD_BUILD_USER": FIXED_BUILD_USER,
+        "KBUILD_BUILD_HOST": FIXED_BUILD_HOST,
+    }
     if stdout_path is None or stderr_path is None:
         return subprocess.run(
             list(argv),
@@ -75,7 +87,7 @@ def run(
             check=False,
             capture_output=True,
             text=True,
-            env={**os.environ, "LC_ALL": "C"},
+            env=env,
         )
     with stdout_path.open("w") as stdout_stream, stderr_path.open("w") as stderr_stream:
         return subprocess.run(
@@ -85,7 +97,7 @@ def run(
             stdout=stdout_stream,
             stderr=stderr_stream,
             text=True,
-            env={**os.environ, "LC_ALL": "C"},
+            env=env,
         )
 
 
@@ -110,6 +122,20 @@ def git_metadata(repo_root: Path) -> dict[str, Any]:
     return {"commit": head.stdout.strip(), "dirty": False}
 
 
+def verify_clean_after_build(repo_root: Path) -> dict[str, Any]:
+    status = run(["git", "status", "--porcelain"], cwd=repo_root)
+    if status.returncode != 0:
+        raise RuntimeError("post-build source cleanliness could not be determined")
+    dirty_entries = [line for line in status.stdout.splitlines() if line.strip()]
+    leftovers = [relative for relative in MODULE_PATHS if (repo_root / relative).exists()]
+    if dirty_entries or leftovers:
+        raise RuntimeError(
+            "post-build cleanup left source-tree artifacts: "
+            + ", ".join(dirty_entries + leftovers)
+        )
+    return {"dirty": False, "leftover_expected_modules": []}
+
+
 def verify_source(repo_root: Path) -> None:
     missing: list[str] = []
     for relative, symbol in REQUIRED_SOURCE_SYMBOLS.items():
@@ -122,6 +148,24 @@ def verify_source(repo_root: Path) -> None:
             missing.append(f"{relative}:{symbol}")
     if missing:
         raise RuntimeError("required merged source symbols are missing: " + ", ".join(missing))
+
+
+def make_commands(kernel_build: Path, jobs: int) -> tuple[list[str], list[str]]:
+    common = [
+        f"SYSSRC={kernel_build}",
+        f"SYSOUT={kernel_build}",
+        f"NV_BUILD_USER={FIXED_BUILD_USER}",
+        f"NV_BUILD_HOST={FIXED_BUILD_HOST}",
+        f"KBUILD_BUILD_USER={FIXED_BUILD_USER}",
+        f"KBUILD_BUILD_HOST={FIXED_BUILD_HOST}",
+    ]
+    clean_command = ["make", "clean", *common]
+    build_command = ["make", f"-j{jobs}", "modules", *common]
+    return clean_command, build_command
+
+
+def expected_module_outputs(repo_root: Path) -> list[str]:
+    return [relative for relative in MODULE_PATHS if (repo_root / relative).exists()]
 
 
 def sign_module(
@@ -151,6 +195,7 @@ def module_metadata(
     version = command_output(["modinfo", "-F", "version", str(module)], cwd=repo_root)
     vermagic = command_output(["modinfo", "-F", "vermagic", str(module)], cwd=repo_root)
     signer = command_output(["modinfo", "-F", "signer", str(module)], cwd=repo_root)
+    srcversion = command_output(["modinfo", "-F", "srcversion", str(module)], cwd=repo_root)
     if version != expected_version:
         raise RuntimeError(f"{module.name}: version {version!r} does not match {expected_version!r}")
     if not vermagic_matches(vermagic, kernel_release):
@@ -165,6 +210,7 @@ def module_metadata(
         "version": version,
         "vermagic": vermagic,
         "signer": signer or None,
+        "srcversion": srcversion or None,
     }
 
 
@@ -190,16 +236,6 @@ def write_failure(output_dir: Path, message: str) -> None:
     write_hashes(output_dir)
 
 
-def remove_prior_module_outputs(repo_root: Path) -> list[str]:
-    removed: list[str] = []
-    for relative in MODULE_PATHS:
-        path = repo_root / relative
-        if path.exists():
-            path.unlink()
-            removed.append(relative)
-    return removed
-
-
 def self_test() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -211,6 +247,11 @@ def self_test() -> None:
         sample = root / "sample"
         sample.write_bytes(b"abc")
         assert sha256_file(sample) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        clean_command, build_command = make_commands(root, 2)
+        assert clean_command[:2] == ["make", "clean"]
+        assert build_command[:3] == ["make", "-j2", "modules"]
+        assert "NV_BUILD_USER=exp0006" in build_command
+        assert "KBUILD_BUILD_HOST=exp0006" in build_command
     assert vermagic_matches(
         "6.8.0-137-generic SMP preempt mod_unload", "6.8.0-137-generic"
     )
@@ -275,19 +316,20 @@ def main() -> int:
     ):
         raise SystemExit("signing key or certificate does not exist")
 
-    build_command = [
-        "make",
-        "modules",
-        f"-j{args.jobs}",
-        f"SYSSRC={kernel_build}",
-        f"SYSOUT={kernel_build}",
-    ]
+    clean_command, build_command = make_commands(kernel_build, args.jobs)
     plan = {
         "kernel_release": args.kernel_release,
         "kernel_build": str(kernel_build),
         "source_commit": source_git["commit"],
         "source_version": source_version,
+        "clean_command": clean_command,
         "build_command": build_command,
+        "fixed_build_identity": {
+            "NV_BUILD_USER": FIXED_BUILD_USER,
+            "NV_BUILD_HOST": FIXED_BUILD_HOST,
+            "KBUILD_BUILD_USER": FIXED_BUILD_USER,
+            "KBUILD_BUILD_HOST": FIXED_BUILD_HOST,
+        },
         "signing_requested": args.sign_key is not None,
         "module_paths": list(MODULE_PATHS),
         "claim_boundary": "Build and provenance evidence only; no module is installed or loaded.",
@@ -299,25 +341,43 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=False)
     modules_dir = output_dir / "modules"
     modules_dir.mkdir()
-    stdout_path = output_dir / "stdout.txt"
-    stderr_path = output_dir / "stderr.txt"
-    removed = remove_prior_module_outputs(repo_root)
     (output_dir / "plan.json").write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n")
-    (output_dir / "commands.txt").write_text(shlex.join(build_command) + "\n")
+    (output_dir / "commands.txt").write_text(
+        shlex.join(clean_command) + "\n"
+        + shlex.join(build_command) + "\n"
+        + shlex.join(clean_command) + "\n"
+    )
+
+    preclean = run(
+        clean_command,
+        cwd=repo_root,
+        stdout_path=output_dir / "preclean.stdout.txt",
+        stderr_path=output_dir / "preclean.stderr.txt",
+    )
+    if preclean.returncode != 0:
+        write_failure(output_dir, f"pre-build make clean exited {preclean.returncode}")
+        raise SystemExit(f"pre-build cleanup failed; evidence retained at {output_dir}")
+    preclean_leftovers = expected_module_outputs(repo_root)
+    if preclean_leftovers:
+        write_failure(
+            output_dir,
+            "pre-build cleanup left expected modules: " + ", ".join(preclean_leftovers),
+        )
+        raise SystemExit(f"pre-build cleanup was incomplete; evidence retained at {output_dir}")
 
     build = run(
         build_command,
         cwd=repo_root,
-        stdout_path=stdout_path,
-        stderr_path=stderr_path,
+        stdout_path=output_dir / "build.stdout.txt",
+        stderr_path=output_dir / "build.stderr.txt",
     )
-    if build.returncode != 0:
-        write_failure(output_dir, f"make modules exited {build.returncode}")
-        raise SystemExit(
-            f"module build failed with exit code {build.returncode}; evidence retained at {output_dir}"
-        )
 
+    failure: str | None = None
+    metadata: list[dict[str, Any]] = []
     try:
+        if build.returncode != 0:
+            raise RuntimeError(f"make modules exited {build.returncode}")
+
         staged: list[Path] = []
         for relative in MODULE_PATHS:
             source = repo_root / relative
@@ -343,52 +403,82 @@ def main() -> int:
             )
             for module in staged
         ]
-        manifest = {
-            "schema_version": 1,
-            "experiment": "EXP-0006-read-only-nvkms-hdcp",
-            "generated_at": utc_now(),
-            "source": source_git,
-            "source_version": source_version,
-            "kernel_release": args.kernel_release,
-            "kernel_build": str(kernel_build.resolve()),
-            "build_command": build_command,
-            "build_returncode": build.returncode,
-            "prior_module_outputs_removed": removed,
-            "modules": metadata,
-            "signing": {
-                "requested": args.sign_key is not None,
-                "certificate_sha256": sha256_file(args.sign_cert)
-                if args.sign_cert
-                else None,
-                "private_key_recorded": False,
-            },
-            "safety": {
-                "installed": False,
-                "loaded": False,
-                "boot_configuration_changed": False,
-                "rebooted": False,
-            },
-            "claim_boundary": "PROVEN_BUILD only; runtime CAPABILITY_ADVERTISED is not established.",
-        }
-        (output_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-        )
-        (output_dir / "verdict.md").write_text(
-            "# Build verdict\n\n"
-            "Status: `PASSED`\n\n"
-            "Highest state proven: `PROVEN_BUILD` / `SOURCE_PRESENT`.\n\n"
-            "No module was installed or loaded. Runtime EXP-0006 remains blocked on recovery review and explicit approval.\n"
-        )
-        (output_dir / "README.txt").write_text(
-            "Exact-kernel EXP-0006 build package. Verify artifacts.sha256 and review local filesystem paths in logs before sharing. The package contains no private signing key.\n"
-        )
-        write_hashes(output_dir)
     except (OSError, RuntimeError) as exc:
-        write_failure(output_dir, str(exc))
-        raise SystemExit(
-            f"post-build validation failed; evidence retained at {output_dir}: {exc}"
-        ) from exc
+        failure = str(exc)
 
+    postclean = run(
+        clean_command,
+        cwd=repo_root,
+        stdout_path=output_dir / "postclean.stdout.txt",
+        stderr_path=output_dir / "postclean.stderr.txt",
+    )
+    cleanup_record: dict[str, Any] = {
+        "preclean_returncode": preclean.returncode,
+        "build_returncode": build.returncode,
+        "postclean_returncode": postclean.returncode,
+    }
+    if postclean.returncode != 0:
+        cleanup_record["clean_tree_verified"] = False
+        failure = failure or f"post-build make clean exited {postclean.returncode}"
+    else:
+        try:
+            cleanup_record.update(verify_clean_after_build(repo_root))
+            cleanup_record["clean_tree_verified"] = True
+        except RuntimeError as exc:
+            cleanup_record["clean_tree_verified"] = False
+            cleanup_record["verification_error"] = str(exc)
+            failure = failure or str(exc)
+    (output_dir / "cleanup.json").write_text(
+        json.dumps(cleanup_record, indent=2, sort_keys=True) + "\n"
+    )
+
+    if failure is not None:
+        write_failure(output_dir, failure)
+        raise SystemExit(
+            f"exact-kernel build validation failed; evidence retained at {output_dir}: {failure}"
+        )
+
+    manifest = {
+        "schema_version": 1,
+        "experiment": "EXP-0006-read-only-nvkms-hdcp",
+        "generated_at": utc_now(),
+        "source": source_git,
+        "source_version": source_version,
+        "kernel_release": args.kernel_release,
+        "kernel_build": str(kernel_build.resolve()),
+        "clean_command": clean_command,
+        "build_command": build_command,
+        "cleanup": cleanup_record,
+        "fixed_build_identity": plan["fixed_build_identity"],
+        "modules": metadata,
+        "signing": {
+            "requested": args.sign_key is not None,
+            "certificate_sha256": sha256_file(args.sign_cert)
+            if args.sign_cert
+            else None,
+            "private_key_recorded": False,
+        },
+        "safety": {
+            "installed": False,
+            "loaded": False,
+            "boot_configuration_changed": False,
+            "rebooted": False,
+        },
+        "claim_boundary": "PROVEN_BUILD only; runtime CAPABILITY_ADVERTISED is not established.",
+    }
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    )
+    (output_dir / "verdict.md").write_text(
+        "# Build verdict\n\n"
+        "Status: `PASSED`\n\n"
+        "Highest state proven: `PROVEN_BUILD` / `SOURCE_PRESENT`.\n\n"
+        "The source tree was cleaned before and after the exact-kernel build. No module was installed or loaded. Runtime EXP-0006 remains blocked on recovery review and explicit approval.\n"
+    )
+    (output_dir / "README.txt").write_text(
+        "Exact-kernel EXP-0006 build package. Verify artifacts.sha256 and review local filesystem paths in logs before sharing. Fixed build user/host strings were used, and the package contains no private signing key.\n"
+    )
+    write_hashes(output_dir)
     print(f"EXP-0006 exact-kernel build staged at {output_dir}")
     return 0
 
