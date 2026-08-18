@@ -68,16 +68,36 @@ jobs:
           if (($output -join "`n") -ne 'mfcdm-probe self-test passed') {
             throw "unexpected self-test output: $output"
           }
+
+          # The probe intentionally writes its usage error to stderr before
+          # exiting 2. Under GitHub Actions' pwsh default ($ErrorActionPreference
+          # = 'Stop'), any stderr write from a native command becomes a
+          # terminating NativeCommandError as soon as the call returns -
+          # regardless of exit code or that stderr is redirected to a file -
+          # so the exit-code check below never runs. Relax the preference for
+          # just this call so the expected usage error can't abort the step.
+          $previousErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
           & $exe --content-type 'video/mp4' 1>$env:RUNNER_TEMP/usage.stdout.txt 2>$env:RUNNER_TEMP/usage.stderr.txt
-          if ($LASTEXITCODE -ne 2) {
-            throw "usage negative control returned $LASTEXITCODE instead of 2"
+          $negativeControlExitCode = $LASTEXITCODE
+          $ErrorActionPreference = $previousErrorActionPreference
+
+          if ($negativeControlExitCode -ne 2) {
+            throw "usage negative control returned $negativeControlExitCode instead of 2"
           }
       - name: Inspect direct PE imports
         shell: pwsh
         run: |
           $exe = Resolve-Path build/mfcdm/Release/mfcdm-probe.exe
-          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022" `
-            -Filter dumpbin.exe -Recurse -ErrorAction Stop |
+          # Search both possible VS install roots without pinning a product-year
+          # folder ("2022", "18", ...) - that folder name changes across runner
+          # images and has already drifted once.
+          $vsRoots = @(
+            "${env:ProgramFiles}\Microsoft Visual Studio"
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio"
+          ) | Where-Object { Test-Path $_ }
+          $dumpbin = $vsRoots |
+            ForEach-Object { Get-ChildItem $_ -Filter dumpbin.exe -Recurse -ErrorAction SilentlyContinue } |
             Where-Object FullName -Match '\\Hostx64\\x64\\dumpbin\.exe$' |
             Select-Object -First 1
           if (-not $dumpbin) {
