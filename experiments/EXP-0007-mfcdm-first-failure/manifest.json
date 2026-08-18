@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-08-17T00:00:00-04:00",
+  "source_baseline": "e4a5faa2567f28c8eabe0ebb6422b6d0abcf37eb",
+  "implementation_commit": "f1960bfb3583e9b09d56f9fe5cf87af91e3c40bf",
+  "state_claim": "SOURCE_PRESENT",
+  "status": "BUILD_PASSED_RUNTIME_NOT_RUN",
+  "requires_native_linux": false,
+  "requires_windows": true,
+  "requires_module_load": false,
+  "secrets_collected": false,
+  "id": "EXP-0007-mfcdm-first-failure",
+  "title": "Trace the public Media Foundation CDM discovery first failure",
+  "question": "At which public factory or type-support stage does an identical explicit query first fail or report unsupported on Windows and Wine?",
+  "acceptance_criteria": [
+    "The executable builds from public Windows SDK interfaces with warnings as errors.",
+    "No key system is queried unless an operator supplies one explicitly.",
+    "The trace distinguishes HRESULT failure, semantic unsupported, and unrequested stages.",
+    "Source and direct imports contain no CDM access/session/license/network operation.",
+    "Paired Windows and Wine runs use the same executable hash and explicit input before a runtime verdict is assigned."
+  ]
+}
