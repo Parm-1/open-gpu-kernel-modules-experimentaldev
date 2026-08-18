@@ -60,31 +60,56 @@ jobs:
       - name: Run deterministic self-test
         shell: pwsh
         run: |
-          $exe = Resolve-Path build/mfcdm/Release/mfcdm-probe.exe
-          $output = & $exe --self-test
-          if ($LASTEXITCODE -ne 0) {
-            throw "self-test returned $LASTEXITCODE"
-          }
-          if (($output -join "`n") -ne 'mfcdm-probe self-test passed') {
-            throw "unexpected self-test output: $output"
-          }
-
-          # The probe intentionally writes its usage error to stderr before
-          # exiting 2. Under GitHub Actions' pwsh default ($ErrorActionPreference
-          # = 'Stop'), any stderr write from a native command becomes a
-          # terminating NativeCommandError as soon as the call returns -
-          # regardless of exit code or that stderr is redirected to a file -
-          # so the exit-code check below never runs. Relax the preference for
-          # just this call so the expected usage error can't abort the step.
-          $previousErrorActionPreference = $ErrorActionPreference
+          # GitHub's log export has repeatedly not shown the text of an
+          # uncaught PowerShell exception from this step, only "Process
+          # completed with exit code 1" - so every stage below writes an
+          # explicit Write-Host line BEFORE any check that could throw, and
+          # every risky call is wrapped so failures are printed rather than
+          # relying on PowerShell's default uncaught-exception rendering.
           $ErrorActionPreference = 'Continue'
-          & $exe --content-type 'video/mp4' 1>$env:RUNNER_TEMP/usage.stdout.txt 2>$env:RUNNER_TEMP/usage.stderr.txt
-          $negativeControlExitCode = $LASTEXITCODE
-          $ErrorActionPreference = $previousErrorActionPreference
+          $exe = Resolve-Path build/mfcdm/Release/mfcdm-probe.exe
+          Write-Host "probe path: $exe"
 
-          if ($negativeControlExitCode -ne 2) {
-            throw "usage negative control returned $negativeControlExitCode instead of 2"
+          Write-Host "invoking --self-test"
+          $selfTestOutput = $null
+          $selfTestExit = $null
+          try {
+            $selfTestOutput = & $exe --self-test
+            $selfTestExit = $LASTEXITCODE
+          } catch {
+            Write-Host "self-test invocation threw: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
+            Write-Host ($_.ScriptStackTrace)
+            exit 1
           }
+          Write-Host "self-test exit code: $selfTestExit"
+          Write-Host "self-test output: $($selfTestOutput -join '|')"
+          if ($selfTestExit -ne 0) {
+            Write-Host "FAIL: self-test returned $selfTestExit instead of 0"
+            exit 1
+          }
+          if (($selfTestOutput -join "`n") -ne 'mfcdm-probe self-test passed') {
+            Write-Host "FAIL: unexpected self-test output"
+            exit 1
+          }
+          Write-Host "self-test OK"
+
+          Write-Host "invoking --content-type without --key-system (expected usage error, exit 2)"
+          $negativeControlExit = $null
+          try {
+            & $exe --content-type 'video/mp4' 1>$env:RUNNER_TEMP/usage.stdout.txt 2>$env:RUNNER_TEMP/usage.stderr.txt
+            $negativeControlExit = $LASTEXITCODE
+          } catch {
+            Write-Host "negative-control invocation threw: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
+            Write-Host ($_.ScriptStackTrace)
+            exit 1
+          }
+          Write-Host "negative-control exit code: $negativeControlExit"
+          Write-Host "negative-control stderr: $(Get-Content $env:RUNNER_TEMP/usage.stderr.txt -Raw)"
+          if ($negativeControlExit -ne 2) {
+            Write-Host "FAIL: usage negative control returned $negativeControlExit instead of 2"
+            exit 1
+          }
+          Write-Host "negative control OK - all self-test checks passed"
       - name: Inspect direct PE imports
         shell: pwsh
         run: |
