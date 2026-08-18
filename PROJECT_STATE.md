@@ -1,6 +1,6 @@
 # Authoritative project state
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 
 ## Baseline
 
@@ -12,16 +12,19 @@ Last updated: 2026-08-17
 - Runtime-readiness merge: `3099029dda066e0545267660b8e4e470655b20ba`
 - Runtime-readiness implementation head: `94a50cc2b6199b9804c30bbf2a101278742e5134`
 - MF CDM first-failure implementation head: `f1960bfb3583e9b09d56f9fe5cf87af91e3c40bf`
+- MF CDM first-failure merge to `main`: `f02b89aa276aba85959bbb942b8f14e9ef40e23b`
 - Target GPU: GeForce RTX 2060 (Turing)
 - Initial route: direct DisplayPort SST, one display, SDR 1920×1080 60 Hz
 
 ## Current gate
 
-**Gate 0 hardware baseline: BLOCKED ON NATIVE TARGET EXECUTION**
+**Gate 0 hardware baseline: EXTERNALLY BLOCKED — no native Linux boot with physical RTX 2060 connector ownership is reachable from any environment this project has operated in so far (see [DECISION-0005](docs/decisions/DECISION-0005-gate1-blocked-pending-native-access.md))**
 
 **Gate 1 read-only query implementation: MERGED / FULL-MODULE-BUILD-PASSED / RUNTIME-NOT-RUN**
 
 **Gate 1 runtime readiness: MERGED / TOOLING-COMPLETE / NATIVE-PREFLIGHT-NOT-RUN**
+
+**Gate 1 verdict: cannot be reached without operator action — run EXP-0006 on the physical machine, or grant remote access to one**
 
 Highest NVIDIA security state proven remains `SOURCE_PRESENT`. Generic-header compilation, runtime-tool self-tests, module-identity validation, and protocol preparation do not prove `CAPABILITY_ADVERTISED` on the RTX 2060.
 
@@ -45,7 +48,7 @@ The next NVIDIA evidence must come from the native RTX 2060 machine under that p
 
 ## Media Foundation CDM discovery track
 
-E-001 is source-complete and Windows-build-passed at `f1960bfb3583e9b09d56f9fe5cf87af91e3c40bf`.
+E-001 is source-complete and Windows-build-passed at `f1960bfb3583e9b09d56f9fe5cf87af91e3c40bf`, merged to `main` at `f02b89aa276aba85959bbb942b8f14e9ef40e23b` (PR #4).
 
 The probe uses only public Windows SDK interfaces and stops at:
 
@@ -60,8 +63,9 @@ Native Windows and Wine runtime traces remain `NOT_RUN`; E-002 remains blocked u
 
 ## Next evidence-producing actions
 
-1. Run the read-only EXP-0006 preflight on the native RTX 2060 machine and complete the exact-build/recovery package.
+1. Run the read-only EXP-0006 preflight on the native RTX 2060 machine and complete the exact-build/recovery package. **Requires operator action — no environment this project has run in so far has physical access to the target machine.**
 2. Execute the default-off and two enabled EXP-0006 sessions only after operation-scoped approval.
-3. Collect EXP-0007 infrastructure-only traces on native Windows and Wine with the same built executable hash.
+3. Collect EXP-0007 infrastructure-only traces on native Windows and Wine with the same built executable hash (same access requirement as above).
 4. Only after the infrastructure comparison, decide whether a separately recorded explicit key-system/type query is justified.
 5. Do not begin NVIDIA authentication/KMS work or Wine PMP implementation before their respective evidence gates pass.
+6. Until native access exists, advance N-002 (Nova interface tracking) and other non-hardware tasks per [DECISION-0005](docs/decisions/DECISION-0005-gate1-blocked-pending-native-access.md).
