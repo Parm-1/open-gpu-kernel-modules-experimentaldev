@@ -110,6 +110,13 @@ jobs:
             exit 1
           }
           Write-Host "negative control OK - all self-test checks passed"
+
+          # pwsh propagates a stale non-zero $LASTEXITCODE (here: 2, from the
+          # expected-successful negative-control call above) as this step's
+          # own exit code when the script ends without an explicit exit -
+          # this is what actually failed every prior run of this step, even
+          # though every check above passed. Force success explicitly.
+          exit 0
       - name: Inspect direct PE imports
         shell: pwsh
         run: |
